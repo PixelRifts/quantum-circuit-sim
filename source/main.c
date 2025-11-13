@@ -18,7 +18,7 @@
 
 
 int main() {
-    Complex a = { 1.0, 2.0 };
+    Complex a = { 3.0, 4.0 };
     Complex b = { 1.0, 2.0 };
     printf("a = "); ComplexPrint(a); printf("\n");
     printf("b = "); ComplexPrint(b); printf("\n");
@@ -26,6 +26,30 @@ int main() {
     // Testing!!
     Complex c = ComplexAdd(a, b);
     printf("a+b = "); ComplexPrint(c); printf("\n");
+
+    Complex d = ComplexSub(a, b);
+    printf("a-b = "); ComplexPrint(d); printf("\n");
+
+    Complex e = ComplexMul(a, b);
+    printf("a*b = "); ComplexPrint(e); printf("\n");
+
+    Complex conjugate = ComplexConjugate(a);
+    printf("a* = "); ComplexPrint(conjugate); printf("\n");
+
+    Complex div = ComplexDiv(a,b);
+    printf("a/b = "); ComplexPrint(div); printf("\n");
+
+    f64 mag = ComplexMag(a);
+    printf("mag(a) = %lf\n",mag);
+
+    f64 angle = ComplexAngle(a);
+    printf("angle(deg) = %lf\n",angle);
+
+    Complex scale = ComplexScale(a,4);
+    printf("a*s = "); ComplexPrint(scale); printf("\n");
+
+    Complex theta = ComplexExp(0);
+    printf("theta = "); ComplexPrint(theta); printf("\n");
     // Add all the function tests here
 }
 
