@@ -20,10 +20,13 @@
 int main() {
     Complex a = { 3.0, 4.0 };
     Complex b = { 1.0, 2.0 };
+    Qubit q = { {1.0, 2.0}, {3.0, 4.0} };
     printf("a = "); ComplexPrint(a); printf("\n");
     printf("b = "); ComplexPrint(b); printf("\n");
     
     // Testing!!
+
+    //Complex functions
     Complex c = ComplexAdd(a, b);
     printf("a+b = "); ComplexPrint(c); printf("\n");
 
@@ -50,6 +53,16 @@ int main() {
 
     Complex theta = ComplexExp(0);
     printf("theta = "); ComplexPrint(theta); printf("\n");
+
+    //Qubit functions
+    Qubit norm = QubitNormalize(q);
+    printf("qubitnorm = "); QubitPrint(norm); printf("\n");
+
+    Qubit measure = QubitMeasure(q);
+    printf("qubitprobs = "); QubitPrint(measure); printf("\n");
+
+
+
     // Add all the function tests here
 }
 

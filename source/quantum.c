@@ -58,6 +58,20 @@ void ComplexPrint(Complex c) {
 
 // Put qubit function implementations here
 // TODO()
+Qubit QubitNormalize(Qubit q){
+    f64 norm=sqrt((q.alpha.a*q.alpha.a + q.alpha.b*q.alpha.b)+ (q.beta.a*q.beta.a + q.beta.b*q.beta.b));
+    return (Qubit) { {q.alpha.a/norm, q.alpha.b/norm}, {q.beta.a/norm, q.beta.b/norm} };
+}
+
+Qubit QubitMeasure(Qubit q){
+    //compute probabs
+    f64 probAlpha=(q.alpha.a*q.alpha.a) + (q.alpha.b*q.alpha.b);
+    f64 probBeta=(q.beta.a*q.beta.a) + (q.beta.b*q.beta.b);
+
+    return (Qubit) {{probAlpha/(probAlpha+probBeta), 0.0}, {probBeta/(probAlpha+probBeta), 0.0}};
+
+    //do we have to add threshold? o/p either |0> or |1>
+}
 
 b8 QubitEpsEqual(Qubit a, Qubit b, f64 eps) {
     return
