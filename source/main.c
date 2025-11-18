@@ -15,64 +15,11 @@
 #include <stdlib.h>
 #include <time.h>
 
-
-
 int main() {
-    Complex a = { 3.0, 4.0 };
-    Complex b = { 1.0, 2.0 };
-    Qubit q = { {1.0, 2.0}, {3.0, 4.0} };
-    printf("a = "); ComplexPrint(a); printf("\n");
-    printf("b = "); ComplexPrint(b); printf("\n");
-    
-    // Testing!!
-
-    //Complex functions
-    Complex c = ComplexAdd(a, b);
-    printf("a+b = "); ComplexPrint(c); printf("\n");
-
-    Complex d = ComplexSub(a, b);
-    printf("a-b = "); ComplexPrint(d); printf("\n");
-
-    Complex e = ComplexMul(a, b);
-    printf("a*b = "); ComplexPrint(e); printf("\n");
-
-    Complex conjugate = ComplexConjugate(a);
-    printf("a* = "); ComplexPrint(conjugate); printf("\n");
-
-    Complex div = ComplexDiv(a,b);
-    printf("a/b = "); ComplexPrint(div); printf("\n");
-
-    f64 mag = ComplexMag(a);
-    printf("mag(a) = %lf\n",mag);
-
-    f64 angle = ComplexAngle(a);
-    printf("angle(deg) = %lf\n",angle);
-
-    Complex scale = ComplexScale(a,4);
-    printf("a*s = "); ComplexPrint(scale); printf("\n");
-
-    Complex theta = ComplexExp(0);
-    printf("theta = "); ComplexPrint(theta); printf("\n");
-
-    //Qubit functions
-    Qubit norm = QubitNormalize(q);
-    printf("qubitnorm = "); QubitPrint(norm); printf("\n");
-
-    Qubit measure = QubitMeasure(q);
-    printf("qubitprobs = "); QubitPrint(measure); printf("\n");
-
-
-
-    // Add all the function tests here
-}
-
-//- Bringing this back later
-/*
-int main() {
-	OS_Init();
+    OS_Init();
 	
     ThreadContext context = {0};
-	tctx_init(&context);
+    tctx_init(&context);
     U_FrameArenaInit();
     
     M_Arena systems_arena = {0};
@@ -100,6 +47,35 @@ int main() {
     
     Rift_UIBox* content = Rift_WindowCustomTitlebar(&window, ctx, renderer, trirenderer);
     
+    QState state = {
+        .bitcount = 2,
+        .size = 4,
+        .state = arena_alloc(&systems_arena, sizeof(Complex) * 4),
+    };
+    state.state[0b00] = (Complex){0,0};
+    state.state[0b01] = (Complex){1,0};
+    state.state[0b10] = (Complex){0,0};
+    state.state[0b11] = (Complex){0,0};
+    
+    for (int i = 0; i < 4; i++) {
+        ComplexPrint(state.state[i]);
+        printf(", ");
+    }
+    printf("\n");
+    QGate test = {
+        .size = QGate_1,
+        .m1 = {
+            {{ 0, 0 }, { 1, 0 }},
+            {{ 1, 0 }, { 0, 0 }},
+        },
+    };
+    
+    QGateApply(&test, &(u32){0}, &state);
+    for (int i = 0; i < 4; i++) {
+        ComplexPrint(state.state[i]);
+        printf(", ");
+    }
+    printf("\n");
     
     float start = 0.0f;
     float end = 0.016f;
@@ -130,7 +106,6 @@ int main() {
         end = glfwGetTime();
     }
     
-    SimulationDestroy(netsim);
     
     Rift_UIRendererFree(renderer);
     Rift_TriRendererFree(trirenderer);
@@ -144,4 +119,3 @@ int main() {
     U_FrameArenaFree();
 	tctx_free(&context);
 }
-*/

@@ -30,20 +30,32 @@ typedef struct Qubit {
 } Qubit;
 
 Qubit QubitNormalize(Qubit q);
-Qubit QubitMeasure(Qubit q);
+f64   QubitMeasure(Qubit q);
 b8    QubitEpsEqual(Qubit a, Qubit b, f64 eps);
 void  QubitPrint(Qubit q);
 
+typedef struct QState {
+    u32      bitcount;
+    u32      size;
+    Complex* state;
+} QState;
+
 // https://en.wikipedia.org/wiki/Quantum_logic_gate
-// Matrix form
+typedef enum QGateSize {
+    QGate_1 = 1,
+    QGate_2 = 2,
+} QGateSize;
+
 typedef struct QGate {
-    Complex m[2][2];
+    QGateSize size;
+    union {
+        Complex m [16];
+        Complex m1[2][2];
+        Complex m2[4][4];
+    };
 } QGate;
 
-Qubit QGateApply(QGate g, Qubit q);
-QGate QGateCompose(QGate a, QGate b); // Probably not gonna use this but ok
-b8    QGateIsUnitary(QGate g, f64 eps);
-b8 QGateEpsEqual(QGate a, QGate b, f64 eps);
-void  QGatePrint(QGate g);
+void QGateApply(QGate* g, u32* inputs_idxs, QState* state);
+void QGatePrint(QGate* g);
 
 #endif //QUANTUM_H
