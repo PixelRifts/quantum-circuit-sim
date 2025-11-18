@@ -8,7 +8,7 @@
 #include "client/simple_ui_render.h"
 #include "client/tri_render.h"
 
-//#include "netsim.h"
+#include "edit.h"
 #include "quantum.h"
 
 #include <glad/glad.h>
@@ -47,35 +47,13 @@ int main() {
     
     Rift_UIBox* content = Rift_WindowCustomTitlebar(&window, ctx, renderer, trirenderer);
     
-    QState state = {
-        .bitcount = 2,
-        .size = 4,
-        .state = arena_alloc(&systems_arena, sizeof(Complex) * 4),
-    };
-    state.state[0b00] = (Complex){0,0};
-    state.state[0b01] = (Complex){1,0};
-    state.state[0b10] = (Complex){0,0};
-    state.state[0b11] = (Complex){0,0};
     
-    for (int i = 0; i < 4; i++) {
-        ComplexPrint(state.state[i]);
-        printf(", ");
-    }
-    printf("\n");
-    QGate test = {
-        .size = QGate_1,
-        .m1 = {
-            {{ 0, 0 }, { 1, 0 }},
-            {{ 1, 0 }, { 0, 0 }},
-        },
-    };
+    Circuit dummy_circuit = (Circuit) { .qubit_count = 4, };
+    CircuitEmitAsPython(&dummy_circuit, str_lit("output.py"));
     
-    QGateApply(&test, &(u32){0}, &state);
-    for (int i = 0; i < 4; i++) {
-        ComplexPrint(state.state[i]);
-        printf(", ");
-    }
-    printf("\n");
+    
+    
+    
     
     float start = 0.0f;
     float end = 0.016f;

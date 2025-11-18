@@ -28,8 +28,10 @@ typedef enum GateType {
 typedef enum InspectType {
     Inspect_Chance,
     Inspect_BlochSphere,
-} GateType;
+} InspectType;
 
+
+// Tagged / Discriminated Union
 typedef struct Operator {
     OperatorType type;
     
@@ -39,13 +41,18 @@ typedef struct Operator {
     };
 } Operator;
 
+
+// A VERTICAL SLICE NOT HORIZONTAL
+// len always equal to qubit_count
 typedef struct OperatorSlice {
     u32 len;
     u32 cap;
     Operator* ops;
 } OperatorSlice;
 
+// A HORIZONTAL SET OF VERTICAL SLICES
 typedef struct Circuit {
+    u32 qubit_count;
     u32 len;
     u32 cap;
     OperatorSlice* slices;
@@ -53,10 +60,11 @@ typedef struct Circuit {
 
 
 
+void CircuitEmitAsPython(Circuit* circuit, string filename);
 
 
 typedef struct EditContext {
-    OperatorSlice* ;
+    Circuit* circuit;
 } EditContext;
 
 EditContext* EditorCreate(M_Arena* arena);

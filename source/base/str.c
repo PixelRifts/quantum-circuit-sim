@@ -169,7 +169,7 @@ void string_list_push_node(string_const_list* list, string_const_list_node* node
 }
 
 void string_list_push(M_Arena* arena, string_const_list* list, string_const str) {
-    string_const_list_node* node = (string_const_list_node*) arena_alloc(arena, sizeof(string_const_list_node));
+    string_const_list_node* node = (string_const_list_node*) arena_alloc_zero(arena, sizeof(string_const_list_node));
     node->str = str;
     string_list_push_node(list, node);
 }
