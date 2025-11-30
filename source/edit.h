@@ -59,15 +59,21 @@ typedef struct Circuit {
 } Circuit;
 
 
-
 void CircuitEmitAsPython(Circuit* circuit, string filename);
+void CircuitSetQubitCount(Circuit* circuit, int new_count);
+OperatorSlice* CircuitInsertTimesliceAt(Circuit* circuit, u32 index);
+OperatorSlice* CircuitPushTimeslice(Circuit* circuit);
+
 
 
 typedef struct EditContext {
-    Circuit* circuit;
+    Circuit circuit;
+    
+    Rift_UIContext* ctx;
+    Rift_UIBox* lines;
 } EditContext;
 
 EditContext* EditorCreate(M_Arena* arena);
-void EditorFree();
+void EditorFree(EditContext* ctx);
 
 #endif //EDIT_H

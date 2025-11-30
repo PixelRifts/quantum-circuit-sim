@@ -53,7 +53,7 @@ int main() {
     
     
     
-    
+    EditContext* editor = EditorCreate(&systems_arena);
     
     float start = 0.0f;
     float end = 0.016f;
@@ -85,10 +85,12 @@ int main() {
     }
     
     
+    EditorFree(editor);
+    
+    
     Rift_UIRendererFree(renderer);
     Rift_TriRendererFree(trirenderer);
     Rift_UIContextDestroy(ctx);
-    
     
     Rift_WindowDestroy(&window);
     
