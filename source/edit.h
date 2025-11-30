@@ -66,14 +66,41 @@ OperatorSlice* CircuitPushTimeslice(Circuit* circuit);
 
 
 
+typedef enum BlockType {
+    BlockType_H,
+    BlockType_X,
+    BlockType_Y,
+    BlockType_Max,
+} BlockType;
+
+static string block_type_names[BlockType_Max] = {
+    [BlockType_H] = str_lit("H"),
+    [BlockType_X] = str_lit("X"),
+    [BlockType_Y] = str_lit("Y"),
+};
+
 typedef struct EditContext {
+    M_Arena arena;
     Circuit circuit;
     
-    Rift_UIContext* ctx;
-    Rift_UIBox* lines;
+    Rift_UIContext* ui;
+    Rift_UIBox* content;
+    Rift_UIBox* top_bar;
+    Rift_UIBox* qubit_area;
+    Rift_UIBox* qubit_labels_area;
+    Rift_UIBox* qubit_lines_area;
+    
+    Rift_UIBox* qubit_add;
+    Rift_UIBox* qubit_remove;
+    
+    Rift_UIBox* pick_gates[BlockType_Max];
+    Rift_UIBox* label_paddings[8];
+    Rift_UIBox* labels[8];
+    Rift_UIBox* lines[8];
 } EditContext;
 
-EditContext* EditorCreate(M_Arena* arena);
+EditContext* EditorCreate(M_Arena* arena, Rift_UIContext* ui, Rift_UIBox* content);
+void EditorUpdate(EditContext* ctx, f32 delta);
 void EditorFree(EditContext* ctx);
 
 #endif //EDIT_H

@@ -47,13 +47,42 @@ int main() {
     
     Rift_UIBox* content = Rift_WindowCustomTitlebar(&window, ctx, renderer, trirenderer);
     
+    //dummy circuit1
+    Operator slice0[2]={ 
+        {.type=OpType_Gate1, .gate=Gate_H},
+        {.type=OpType_Identity}
+    };
     
-    Circuit dummy_circuit = (Circuit) { .qubit_count = 4, };
+    Operator slice1[2]={
+        {.type=OpType_Identity},
+        {.type=OpType_Gate1, .gate=Gate_PX},
+    };
+    
+    OperatorSlice slices[2]={
+        {.len=2, .cap=2, .ops=slice0},
+        {.len=2, .cap=2, .ops=slice1}
+    };
+    
+    Circuit dummy_circuit = (Circuit) { .qubit_count = 2, .len=2, .cap=2, .slices=slices};
+    
+    //dummy circuit2 controlled gate
+    /*Operator slice0[2]={ 
+        {.type=OpType_ControlOn},
+        {.type=OpType_Gate1, .gate=Gate_PX}
+    };
+
+    OperatorSlice slices[1]={
+        {.len=2, .cap=2, .ops=slice0},
+    };
+    
+    Circuit dummy_circuit = (Circuit) { .qubit_count = 2, .len=1, .cap=1, .slices=slices};*/
+    
+    
     CircuitEmitAsPython(&dummy_circuit, str_lit("output.py"));
     
     
     
-    EditContext* editor = EditorCreate(&systems_arena);
+    EditContext* editor = EditorCreate(&systems_arena, ctx, content);
     
     float start = 0.0f;
     float end = 0.016f;
@@ -69,8 +98,8 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT);
         
         Rift_WindowUpdateTitlebar(&window, ctx);
+        EditorUpdate(editor, delta);
         Rift_UIContextUpdate(ctx, delta);
-        
         
         Rift_UIRendererBegin(renderer);
         Rift_TriRendererBegin(trirenderer);
