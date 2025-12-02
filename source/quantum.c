@@ -79,7 +79,28 @@ void QubitPrint(Qubit q) {
     printf(" |1>");
 }
 
+//- QState Implementations
+void QStateResize(QState* state, u32 bitcount) {
+    int count = 1;
+    for (int i = 0; i < bitcount; i++) count *= 2;
+    
+    if (state->cap < count) {
+        state->state = realloc(state->state, count * sizeof(Complex));
+        state->cap   = count;
+    }
+    
+    state->bitcount = bitcount;
+    state->size = count;
+    memset(state->state, 0, state->cap * sizeof(Complex));
+    
+    state->state[0] = (Complex) { 1.0f, 0.0f };
+}
+
 //- QGate Implementations
+
+static Complex ComplexAdd4(Complex a, Complex b, Complex c, Complex d) {
+    return ComplexAdd(ComplexAdd(a, b), ComplexAdd(c, d));
+}
 
 // Put qgate function implementations here
 void QGateApply(QGate* g, u32* inputs_idxs, QState* state) {
@@ -104,7 +125,48 @@ void QGateApply(QGate* g, u32* inputs_idxs, QState* state) {
         } break;
         
         case QGate_2: {
-            // TODO
+            u32 q0 = inputs_idxs[0];
+            u32 q1 = inputs_idxs[1];
+            if (q1 < q0) {
+                u32 t = q0; q0 = q1; q1 = t;
+            }
+            
+            u32 s0 = 1u << q0;
+            u32 s1 = 1u << q1;
+            u32 b1 = s1 << 1;
+            
+            for (u32 base = 0; base < state->size; base += (b1 << 1)) {
+                for (u32 b = 0; b < b1; b += (s1 << 1)) {
+                    for (u32 i = 0; i < s0; i++) {
+                        u32 i00 = base + b + i;
+                        u32 i01 = i00 + s0;
+                        u32 i10 = i00 + s1;
+                        u32 i11 = i10 + s0;
+                        
+                        Complex v00 = psi[i00];
+                        Complex v01 = psi[i01];
+                        Complex v10 = psi[i10];
+                        Complex v11 = psi[i11];
+                        
+                        psi[i00] = ComplexAdd4(ComplexMul(g->m2[0][0], v00),
+                                               ComplexMul(g->m2[0][1], v01),
+                                               ComplexMul(g->m2[0][2], v10),
+                                               ComplexMul(g->m2[0][3], v11));
+                        psi[i01] = ComplexAdd4(ComplexMul(g->m2[1][0], v00),
+                                               ComplexMul(g->m2[1][1], v01),
+                                               ComplexMul(g->m2[1][2], v10),
+                                               ComplexMul(g->m2[1][3], v11));
+                        psi[i10] = ComplexAdd4(ComplexMul(g->m2[2][0], v00),
+                                               ComplexMul(g->m2[2][1], v01),
+                                               ComplexMul(g->m2[2][2], v10),
+                                               ComplexMul(g->m2[2][3], v11));
+                        psi[i11] = ComplexAdd4(ComplexMul(g->m2[3][0], v00),
+                                               ComplexMul(g->m2[3][1], v01),
+                                               ComplexMul(g->m2[3][2], v10),
+                                               ComplexMul(g->m2[3][3], v11));
+                    }
+                }
+            }
         } break;
     }
 }

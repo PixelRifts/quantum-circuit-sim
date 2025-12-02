@@ -353,3 +353,11 @@ rect rect_uv_cull(rect quad, rect uv, rect cull_quad) {
     f32 culled_h = overlap.h * uv_yratio;
     return (rect) { culled_x, culled_y, culled_w, culled_h };
 }
+
+f32 dist_to_line(vec2 a, vec2 b, vec2 p) {
+    f32 l2 = vec2_magsq(vec2_sub(a, b));
+    if (!l2) return vec2_mag(vec2_sub(a, p));
+    f32 t = Max(0, Min(1, vec2_dot(vec2_sub(p, a), vec2_sub(b, a)) / l2));
+    vec2 projection = vec2_add(a, vec2_scale(vec2_sub(b, a), t));
+    return vec2_mag(vec2_sub(p, projection));
+}

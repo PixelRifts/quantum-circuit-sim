@@ -3,9 +3,11 @@ from qiskit_aer import AerSimulator
 
 qc = QuantumCircuit(2)
 qc.h(0)
-qc.x(1)
+qc.cx(0, 1)
 
 qc.measure_all()
+qc.draw()
+
 simulator = AerSimulator()
 compiled_circuit = simulator.run(qc, shots=1024)
 result = compiled_circuit.result()

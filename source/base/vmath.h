@@ -180,4 +180,8 @@ b8   rect_contained_by_rect(rect a, rect b);
 rect rect_get_overlap(rect a, rect b);
 rect rect_uv_cull(rect quad, rect uv, rect cull_quad);
 
+//~ Random Helpers
+
+f32 dist_to_line(vec2 a, vec2 b, vec2 p);
+
 #endif //VMATH_H

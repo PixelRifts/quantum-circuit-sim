@@ -37,8 +37,11 @@ void  QubitPrint(Qubit q);
 typedef struct QState {
     u32      bitcount;
     u32      size;
+    u32      cap;
     Complex* state;
 } QState;
+
+void QStateResize(QState* state, u32 bitcount);
 
 // https://en.wikipedia.org/wiki/Quantum_logic_gate
 typedef enum QGateSize {

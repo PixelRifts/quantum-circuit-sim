@@ -6,7 +6,7 @@
 #include "base/base.h"
 
 #include "client/ui.h"
-
+#include "quantum.h"
 
 
 
@@ -56,6 +56,8 @@ typedef struct Circuit {
     u32 len;
     u32 cap;
     OperatorSlice* slices;
+    
+    QState state;
 } Circuit;
 
 
@@ -70,21 +72,43 @@ typedef enum BlockType {
     BlockType_H,
     BlockType_X,
     BlockType_Y,
+    BlockType_Z,
+    
+    BlockType_ControlOn,
+    BlockType_ControlOff,
     BlockType_Max,
 } BlockType;
 
 static string block_type_names[BlockType_Max] = {
     [BlockType_H] = str_lit("H"),
-    [BlockType_X] = str_lit("X"),
-    [BlockType_Y] = str_lit("Y"),
+    [BlockType_X] = str_lit("PX"),
+    [BlockType_Y] = str_lit("PY"),
+    [BlockType_Z] = str_lit("PZ"),
+    [BlockType_ControlOn]  = str_lit("On"),
+    [BlockType_ControlOff] = str_lit("Off"),
+};
+
+typedef struct EditableCircuitBlock EditableCircuitBlock;
+struct EditableCircuitBlock {
+    EditableCircuitBlock* next;
+    EditableCircuitBlock* prev;
+    
+    BlockType type;
+    Rift_UIBox* box;
+    
+    u32 line;
+    u32 timeslice;
+    u32 image;
 };
 
 typedef struct EditContext {
     M_Arena arena;
+    M_Pool circuit_block_pool;
     Circuit circuit;
     
     Rift_UIContext* ui;
     Rift_UIBox* content;
+    Rift_UIBox* laidout_content;
     Rift_UIBox* top_bar;
     Rift_UIBox* qubit_area;
     Rift_UIBox* qubit_labels_area;
@@ -97,6 +121,17 @@ typedef struct EditContext {
     Rift_UIBox* label_paddings[8];
     Rift_UIBox* labels[8];
     Rift_UIBox* lines[8];
+    
+    b8 dragging;
+    EditableCircuitBlock* dragging_block;
+    
+    EditableCircuitBlock* first_block;
+    EditableCircuitBlock* last_block;
+    u32 block_count;
+    
+    u32 texture_px;
+    u32 texture_con_on;
+    u32 texture_con_off;
 } EditContext;
 
 EditContext* EditorCreate(M_Arena* arena, Rift_UIContext* ui, Rift_UIBox* content);
