@@ -8,12 +8,35 @@
 
 #include "client/tri_render.h"
 
+const char* get_qiskit_gate_class(GateType gate) {
+    switch (gate) {
+        case Gate_H:  return "HGate";
+        case Gate_PX: return "XGate";
+        case Gate_PY: return "YGate";
+        case Gate_PZ: return "ZGate";
+        case Gate_S:  return "SGate";
+        case Gate_T:  return "TGate";
+        default:      return "XGate";
+    }
+}
+
+// Helper to map Enum to simple function calls (for non-controlled ops)
+const char* get_qiskit_func_name(GateType gate) {
+    switch (gate) {
+        case Gate_H:  return "h";
+        case Gate_PX: return "x";
+        case Gate_PY: return "y";
+        case Gate_PZ: return "z";
+        case Gate_S:  return "s";
+        case Gate_T:  return "t";
+        default:      return "x";
+    }
+}
+
 void CircuitEmitAsPython(Circuit* circuit, string filename) {
     M_Scratch scratch = scratch_get();
     // List of lines to output
     string_list output = {0};
-    
-    
     
     // Add lines like this.
     // Check str.h to see how to work with strings. try not to use char*s.
@@ -24,72 +47,108 @@ void CircuitEmitAsPython(Circuit* circuit, string filename) {
     //   str_from_format() : like printf, but makes a "string" instead of outputting to console
     //                       needs to allocate space so will require an arena parameter
     // Maybe output a few comments too
-    string_list_push(&scratch.arena, &output, str_lit("from qiskit import QuantumCircuit\n"));
+    string_list_push(&scratch.arena, &output, str_lit("import pprint\n"));
+    string_list_push(&scratch.arena, &output, str_lit("from qiskit import QuantumCircuit, transpile\n"));
     string_list_push(&scratch.arena, &output, str_lit("from qiskit_aer import AerSimulator\n"));
+    string_list_push(&scratch.arena, &output, str_lit("from qiskit.circuit.library import XGate, YGate, ZGate, HGate, SGate, TGate\n"));
     
     
     string_list_push(&scratch.arena, &output, str_lit("\n"));
     string_list_push(&scratch.arena, &output,
                      str_from_format(&scratch.arena, "qc = QuantumCircuit(%d)\n", circuit->qubit_count));
     
-    for(u32 i=0; i<circuit->len; i++){
+    for(u32 i = 0; i < circuit->len; i++) {
         OperatorSlice* slice = &circuit->slices[i];
-        u32 control_qubit = -1;
-        u32 target_qubit  = -1;
-        GateType target_gate = 1000;
         
-        b8 controlled_slice = false;
-        for(u32 q=0; q<slice->len; q++) {
-            Operator* op = &slice->ops[q];
-            if (op->type == OpType_ControlOn || op->type == OpType_ControlOff) {
-                controlled_slice = true;
-            }
-        }
+        // 1. Analyze the slice to see if it contains controls
+        b8 is_controlled_slice = false;
+        u32 target_qubit_index = -1;
+        GateType target_gate_type = 0;
         
-        for(u32 q=0; q<slice->len; q++) {
+        // We need buffers to store control indices and states ('0' or '1')
+        // Assuming a max reasonable number of controls, or allocate based on qubit_count
+        u32 control_indices[64]; 
+        char control_states[65]; // +1 for null terminator
+        u32 control_count = 0;
+        
+        for(u32 q = 0; q < slice->len; q++) {
             Operator* op = &slice->ops[q];
             
-            switch(op->type) {
-                case OpType_ControlOff:
-                case OpType_ControlOn: {
-                    control_qubit = q;
-                } break;
-                
-                case OpType_Inspect:
-                case OpType_Identity: {
-                    //string_list_push(&scratch.arena, &output, str_from_format(&scratch.arena, "qc.id(%u)\n", q));
-                } break;
-                
-                case OpType_Gate1: {
-                    
-                    if (!controlled_slice) {
-                        string gates[] = { str_lit("h"), str_lit("x"), str_lit("y"), str_lit("z") };
-                        string qgate = gates[op->gate];
-                        string_list_push(&scratch.arena, &output, str_from_format(&scratch.arena, "qc.%s(%u)\n", qgate.str, q));
-                    } else {
-                        target_qubit = q;
-                        target_gate = op->gate;
-                    }
-                    
-                } break;
-                
-                default: {
-                    string_list_push(&scratch.arena, &output,
-                                     str_from_format(&scratch.arena, "# unsupported operator on qubit %u\n", q));
+            if (op->type == OpType_ControlOn || op->type == OpType_ControlOff) {
+                is_controlled_slice = true;
+                if (control_count < 64) {
+                    control_indices[control_count] = q;
+                    // OpType_ControlOn -> '1', OpType_ControlOff -> '0'
+                    control_states[control_count] = (op->type == OpType_ControlOn) ? '1' : '0';
+                    control_count++;
                 }
+            } else if (op->type == OpType_Gate1) {
+                target_qubit_index = q;
+                target_gate_type = op->gate;
             }
         }
+        control_states[control_count] = '\0'; // Null terminate the state string
         
-        if (controlled_slice) {
-            if (control_qubit != -1 && target_qubit != -1) {
-                string gates[] = {str_lit("h"), str_lit("x"), str_lit("y"), str_lit("z")};
-                string qgate = gates[target_gate];
-                string_list_push(&scratch.arena, &output, str_from_format(&scratch.arena, "qc.c%s(%u, %u)\n", qgate.str, control_qubit, target_qubit));
+        // 2. Emission Logic
+        if (is_controlled_slice) {
+            // --- CONTROLLED OPERATION ---
+            if (target_qubit_index != -1 && control_count > 0) {
+                // We use the general .control() syntax in Qiskit to handle 
+                // arbitrary numbers of controls and "0" states.
+                // Syntax: qc.append(HGate().control(num_ctrl, ctrl_state="01"), [c1, c2, target])
+                
+                const char* gate_class = get_qiskit_gate_class(target_gate_type);
+                
+                // Start the formatting
+                // Note: Depending on your string library, you might need to build the list string dynamically
+                // Here I assume standard format strings can handle it or we build it step by step.
+                
+                string_list_push(&scratch.arena, &output, 
+                                 str_from_format(&scratch.arena, "qc.append(%s().control(%u, ctrl_state='%s'), [", 
+                                                 gate_class, control_count, control_states));
+                
+                // Add control indices
+                for(u32 c = 0; c < control_count; c++) {
+                    string_list_push(&scratch.arena, &output, 
+                                     str_from_format(&scratch.arena, "%u, ", control_indices[c]));
+                }
+                
+                // Add target index and close
+                string_list_push(&scratch.arena, &output, 
+                                 str_from_format(&scratch.arena, "%u])\n", target_qubit_index));
             }
-            else if (target_qubit != -1) {
-                string gates[] = { str_lit("h"), str_lit("x"), str_lit("y"), str_lit("z") };
-                string qgate = gates[target_gate];
-                string_list_push(&scratch.arena, &output, str_from_format(&scratch.arena, "qc.%s(%u)\n", qgate.str, target_qubit));
+            else {
+                // Handle error: Controlled slice with no target or lost controls
+                string_list_push(&scratch.arena, &output, 
+                                 str_lit("# Error: Malformed controlled slice\n"));
+            }
+        } 
+        else {
+            // --- PARALLEL SINGLE GATES ---
+            // If no controls exist, we might have multiple gates in one slice (e.g., H on q0, X on q1)
+            for(u32 q = 0; q < slice->len; q++) {
+                Operator* op = &slice->ops[q];
+                
+                switch(op->type) {
+                    case OpType_Gate1: {
+                        const char* func = get_qiskit_func_name(op->gate);
+                        string_list_push(&scratch.arena, &output, 
+                                         str_from_format(&scratch.arena, "qc.%s(%u)\n", func, q));
+                    } break;
+                    
+                    case OpType_Inspect: {
+                        // Mapping Inspect_Chance or BlochSphere to a comment or save_state
+                        // For aer, save_state_vector is common, or just measure
+                        if (op->inspect == Inspect_Chance) {
+                            string_list_push(&scratch.arena, &output, 
+                                             str_from_format(&scratch.arena, "qc.measure(%u, %u)\n", q, q)); // Simple measure mapping
+                        }
+                    } break;
+                    
+                    case OpType_Identity:
+                    default:
+                    break;
+                }
             }
         }
     }
@@ -99,13 +158,17 @@ void CircuitEmitAsPython(Circuit* circuit, string filename) {
     string_list_push(&scratch.arena, &output,
                      str_lit("simulator = AerSimulator()\n"));
     string_list_push(&scratch.arena, &output,
-                     str_lit("compiled_circuit = simulator.run(qc, shots=1024)\n"));
+                     str_lit("qc = transpile(qc, simulator)\n"));
+    string_list_push(&scratch.arena, &output,
+                     str_lit("compiled_circuit = simulator.run(qc, shots=16384)\n"));
     string_list_push(&scratch.arena, &output,
                      str_lit("result = compiled_circuit.result()\n"));
     string_list_push(&scratch.arena, &output,
                      str_lit("counts = result.get_counts(qc)\n"));
     string_list_push(&scratch.arena, &output,
-                     str_lit("print(counts)\n"));
+                     str_lit("probs = {state: count / 16384 for state, count in counts.items()}\n"));
+    string_list_push(&scratch.arena, &output,
+                     str_lit("pprint.pprint(probs)\n"));
     
     OS_FileCreateWrite(filename, string_list_flatten(&scratch.arena, &output));
     scratch_return(&scratch);
@@ -183,6 +246,20 @@ QGate QGate_FromOperator(GateType t) {
         } break;
         
         case Gate_PZ: {
+            g.m1[0][0] = (Complex){ 1, 0 };
+            g.m1[0][1] = (Complex){ 0, 0 };
+            g.m1[1][0] = (Complex){ 0, 0 };
+            g.m1[1][1] = (Complex){ -1, 0 };
+        } break;
+        
+        case Gate_S: {
+            g.m1[0][0] = (Complex){ 1, 0 };
+            g.m1[0][1] = (Complex){ 0, 0 };
+            g.m1[1][0] = (Complex){ 0, 0 };
+            g.m1[1][1] = (Complex){ -1, 0 };
+        } break;
+        
+        case Gate_T: {
             g.m1[0][0] = (Complex){ 1, 0 };
             g.m1[0][1] = (Complex){ 0, 0 };
             g.m1[1][0] = (Complex){ 0, 0 };
@@ -315,8 +392,17 @@ static Rift_UIBoxStyle g_line_style = (Rift_UIBoxStyle) {
 void DrawBlock(Rift_UIBox* box, Rift_UISimpleRenderer* boxrenderer, Rift_TriRenderer* trirenderer) {
     EditableCircuitBlock* block = box->custom_context;
     vec2 half_size = v2(box->render_width * 0.5f, box->render_height * 0.5f);
-    Rift_TriRendererDrawImage(trirenderer, vec2_add(box->render_pos, half_size),
-                              v2(box->render_width, box->render_height), block->image);
+    
+    if (block->image) {
+        Rift_TriRendererDrawImage(trirenderer, vec2_add(box->render_pos, half_size),
+                                  v2(box->render_width, box->render_height), block->image);
+    }
+    
+    if (block->linked_conditional) {
+        Rift_TriRendererDrawLine(trirenderer, vec2_add(box->render_pos, half_size),
+                                 vec2_add(block->linked_conditional->box->render_pos, half_size),
+                                 Color_White, 4);
+    }
 }
 
 EditableCircuitBlock* EditableBlockCreate(EditContext* ctx, BlockType type) {
@@ -327,14 +413,14 @@ EditableCircuitBlock* EditableBlockCreate(EditContext* ctx, BlockType type) {
     if (type == BlockType_X ||
         type == BlockType_ControlOn ||
         type == BlockType_ControlOff)
-        extra |= (UIBoxFlag_NoStandardDraw | UIBoxFlag_CustomDraw);
-    else extra |= UIBoxFlag_DrawOnTop;
+        extra |= UIBoxFlag_NoStandardDraw;
     
     block->box = Rift_UIBoxCreate(ctx->ui, ctx->content,
                                   Rift_UISizePixels(BLOCK_SIZE), Rift_UISizePixels(BLOCK_SIZE),
                                   &g_block_style,
                                   UIBoxFlag_DrawBack | UIBoxFlag_DrawBorder |
                                   UIBoxFlag_DrawName | UIBoxFlag_Interactive |
+                                  UIBoxFlag_CustomDraw | UIBoxFlag_DrawOnTop |
                                   extra);
     block->box->text = block_type_names[type];
     block->box->custom_context = block;
@@ -383,6 +469,7 @@ static void ClearOperator(EditContext* ctx, u32 timeslice, u32 line) {
 
 static void SetOperator(EditContext* ctx, u32 timeslice, u32 line, BlockType type) {
     Operator* ref = &ctx->circuit.slices[timeslice].ops[line];
+    
     switch (type) {
         case BlockType_H: {
             ref->type = OpType_Gate1;
@@ -402,6 +489,16 @@ static void SetOperator(EditContext* ctx, u32 timeslice, u32 line, BlockType typ
         case BlockType_Z: {
             ref->type = OpType_Gate1;
             ref->gate = Gate_PZ;
+        } break;
+        
+        case BlockType_S: {
+            ref->type = OpType_Gate1;
+            ref->gate = Gate_S;
+        } break;
+        
+        case BlockType_T: {
+            ref->type = OpType_Gate1;
+            ref->gate = Gate_T;
         } break;
         
         case BlockType_ControlOn: {
@@ -436,7 +533,7 @@ EditContext* EditorCreate(M_Arena* arena, Rift_UIContext* ui, Rift_UIBox* conten
     ctx->laidout_content = Rift_UIBoxCreate(ctx->ui, ctx->content,
                                             Rift_UISizePct(1.0f), Rift_UISizePct(1.0f),
                                             &g_panel_style,
-                                            UIBoxFlag_DrawBack);
+                                            0);
     ctx->laidout_content->layout_axis = UIAxis_Y;
     ctx->laidout_content->style.color = v4(0.12f, 0.12f, 0.14f, 1.0f);
     
@@ -533,7 +630,7 @@ EditContext* EditorCreate(M_Arena* arena, Rift_UIContext* ui, Rift_UIBox* conten
 
 void EditorUpdate(EditContext* ctx, f32 delta) {
     if (Rift_UIBoxSignal(ctx->ui, ctx->qubit_add).pressed) {
-        u32 new_count = Min(ctx->circuit.qubit_count + 1, 8);
+        u32 new_count = Min(ctx->circuit.qubit_count + 1, MAX_QUBITS);
         if (new_count != ctx->circuit.qubit_count) {
             ctx->label_paddings[new_count-1] = Rift_UIBoxCreate(ctx->ui, ctx->qubit_lines_area,
                                                                 Rift_UISizePct(1.0f), Rift_UISizePixels(QUBIT_SEPARATION),
@@ -579,6 +676,7 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
         
         if ((sig.dragX || sig.dragY) && !ctx->dragging) {
             ctx->dragging = true;
+            
             ctx->dragging_block = EditableBlockCreate(ctx, i);
             ctx->dragging_block->box->pos.x = OS_InputMouseX() - BLOCK_SIZE * 0.5f;
             ctx->dragging_block->box->pos.y = OS_InputMouseY() - 30.0f - BLOCK_SIZE * 0.5f;
@@ -593,6 +691,17 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
         
         if ((sig.dragX || sig.dragY) && !ctx->dragging) {
             ctx->dragging = true;
+            
+            curr->linked_conditional = nullptr;
+            for (EditableCircuitBlock* other = ctx->first_block; other; other = other->next) {
+                if (curr != other && curr->timeslice == other->timeslice) {
+                    if (curr->type == BlockType_ControlOn ||
+                        curr->type == BlockType_ControlOff) {
+                        other->linked_conditional = nullptr;
+                    }
+                }
+            }
+            
             ctx->dragging_block = curr;
             ctx->dragging_block->box->pos.x = OS_InputMouseX() - BLOCK_SIZE * 0.5f;
             ctx->dragging_block->box->pos.y = OS_InputMouseY() - 30.0f - BLOCK_SIZE * 0.5f;
@@ -672,7 +781,6 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
             }
             
             if (!cancel_placement) {
-                
                 vec2 found_pos = v2(ctx->qubit_lines_area->render_pos.x + nearest_timeslice * BLOCK_SIZE,
                                     ctx->lines[nearest_line]->render_pos.y - 30.0f - BLOCK_SIZE * 0.5f);
                 
@@ -680,6 +788,22 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
                 ctx->dragging_block->timeslice = nearest_timeslice;
                 
                 SetOperator(ctx, ctx->dragging_block->timeslice, ctx->dragging_block->line, ctx->dragging_block->type);
+                
+                // Update linked conditional statuses
+                for (EditableCircuitBlock* other = ctx->first_block; other; other = other->next) {
+                    if (ctx->dragging_block->type == BlockType_ControlOn ||
+                        ctx->dragging_block->type == BlockType_ControlOff) {
+                        if (nearest_timeslice == other->timeslice) {
+                            other->linked_conditional = ctx->dragging_block;
+                        }
+                    } else if (other->type == BlockType_ControlOn ||
+                               other->type == BlockType_ControlOff) {
+                        if (nearest_timeslice == other->timeslice) {
+                            ctx->dragging_block->linked_conditional = other;
+                        }
+                    }
+                }
+                
                 
                 ctx->dragging_block->box->pos = found_pos;
             } else {

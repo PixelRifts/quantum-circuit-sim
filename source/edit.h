@@ -8,7 +8,7 @@
 #include "client/ui.h"
 #include "quantum.h"
 
-
+#define MAX_QUBITS 8
 
 typedef enum OperatorType {
     OpType_Identity,
@@ -23,6 +23,8 @@ typedef enum GateType {
     Gate_PX,
     Gate_PY,
     Gate_PZ,
+    Gate_S,
+    Gate_T,
 } GateType;
 
 typedef enum InspectType {
@@ -73,6 +75,8 @@ typedef enum BlockType {
     BlockType_X,
     BlockType_Y,
     BlockType_Z,
+    BlockType_S,
+    BlockType_T,
     
     BlockType_ControlOn,
     BlockType_ControlOff,
@@ -84,6 +88,8 @@ static string block_type_names[BlockType_Max] = {
     [BlockType_X] = str_lit("PX"),
     [BlockType_Y] = str_lit("PY"),
     [BlockType_Z] = str_lit("PZ"),
+    [BlockType_S] = str_lit("S"),
+    [BlockType_T] = str_lit("T"),
     [BlockType_ControlOn]  = str_lit("On"),
     [BlockType_ControlOff] = str_lit("Off"),
 };
@@ -95,6 +101,8 @@ struct EditableCircuitBlock {
     
     BlockType type;
     Rift_UIBox* box;
+    
+    EditableCircuitBlock* linked_conditional;
     
     u32 line;
     u32 timeslice;
@@ -118,9 +126,9 @@ typedef struct EditContext {
     Rift_UIBox* qubit_remove;
     
     Rift_UIBox* pick_gates[BlockType_Max];
-    Rift_UIBox* label_paddings[8];
-    Rift_UIBox* labels[8];
-    Rift_UIBox* lines[8];
+    Rift_UIBox* label_paddings[MAX_QUBITS];
+    Rift_UIBox* labels[MAX_QUBITS];
+    Rift_UIBox* lines[MAX_QUBITS];
     
     b8 dragging;
     EditableCircuitBlock* dragging_block;

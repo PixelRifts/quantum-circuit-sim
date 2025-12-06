@@ -54,6 +54,8 @@ int main() {
     float end = 0.016f;
     float delta = 0.016f;
     
+    vec4 col = color_code_to_vec4(0x1F1F24FF);
+    glClearColor(col.x, col.y, col.z, col.w);
     while (Rift_WindowIsOpen(&window)) {
         delta = end - start;
         start = glfwGetTime();
@@ -72,8 +74,8 @@ int main() {
         
         Rift_UIContextDraw(ctx, renderer, trirenderer);
         
-        Rift_UIRendererEnd(renderer);
         Rift_TriRendererEnd(trirenderer);
+        Rift_UIRendererEnd(renderer);
         
         Rift_WindowSwapBuffers(&window);
         end = glfwGetTime();
