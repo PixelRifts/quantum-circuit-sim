@@ -509,6 +509,18 @@ static void SetOperator(EditContext* ctx, u32 timeslice, u32 line, BlockType typ
             ref->type = OpType_ControlOff;
         } break;
         
+        case BlockType_Prob: {
+            ref->type = OpType_ControlOff;
+        } break;
+        
+        case BlockType_Bloch: {
+            ref->type = OpType_ControlOff;
+        } break;
+        
+        case BlockType_Amp: {
+            ref->type = OpType_ControlOff;
+        } break;
+        
         case BlockType_Max: break;
     }
 }

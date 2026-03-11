@@ -80,6 +80,11 @@ typedef enum BlockType {
     
     BlockType_ControlOn,
     BlockType_ControlOff,
+    
+    BlockType_Prob,
+    BlockType_Bloch,
+    BlockType_Amp,
+    
     BlockType_Max,
 } BlockType;
 
@@ -92,6 +97,9 @@ static string block_type_names[BlockType_Max] = {
     [BlockType_T] = str_lit("T"),
     [BlockType_ControlOn]  = str_lit("On"),
     [BlockType_ControlOff] = str_lit("Off"),
+    [BlockType_Prob]  = str_lit("Prb"),
+    [BlockType_Bloch] = str_lit("Blch"),
+    [BlockType_Amp] = str_lit("Amp"),
 };
 
 typedef struct EditableCircuitBlock EditableCircuitBlock;
