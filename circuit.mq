@@ -1,9 +1,9 @@
-Circuit(qubits=4, classical=0)
+
+
+Circuit(qubits=3, classical=0)
 0: (Gate, H, q=[0], ctrl=[], p=[], c=[])
-1: (Gate, H, q=[0], ctrl=[1:1], p=[], c=[])
-2: (Gate, H, q=[0], ctrl=[2:1], p=[], c=[])
-3: (Gate, H, q=[0], ctrl=[3:1], p=[], c=[])
-4: (Gate, H, q=[1], ctrl=[2:0], p=[], c=[])
-5: (Gate, H, q=[1], ctrl=[3:0], p=[], c=[])
-6: (Gate, S, q=[2], ctrl=[], p=[], c=[])
-7: (Gate, T, q=[3], ctrl=[], p=[], c=[])
+1: (Gate, Z, q=[0], ctrl=[1:1], p=[], c=[])
+2: (Gate, S, q=[0], ctrl=[2:1], p=[], c=[])
+3: (Gate, H, q=[1], ctrl=[], p=[], c=[])
+4: (Gate, Z, q=[1], ctrl=[2:1], p=[], c=[])
+5: (Gate, H, q=[2], ctrl=[], p=[], c=[])

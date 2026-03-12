@@ -1,4 +1,5 @@
 #include "ir.h"
+#include "os/os.h"
 
 static const char* mq_instr_type_str(MQ_InstrType t) {
     switch (t) {
@@ -235,10 +236,17 @@ void example_ir_dump(M_Arena* arena) {
     
     
     /* ---------- Dump ---------- */
+    string_list t = {0};
+    string_list_push(arena, &t, str_lit("MAIN CIRCUIT\n"));
     string dump_main = mq_ir_to_string(arena, &c);
+    string_list_push(arena, &t, dump_main);
+    string_list_push(arena, &t, str_lit("\n"));
     string dump_sub  = mq_ir_to_string(arena, &bell);
+    string_list_push(arena, &t, dump_sub);
+    string_list_push(arena, &t, str_lit("\n"));
     
     printf("MAIN CIRCUIT\n%.*s\n", str_expand(dump_main));
     printf("SUBCIRCUIT 1 (Bell)\n%.*s\n", str_expand(dump_sub));
     
+    OS_FileCreateWrite(str_lit("test.mq"), string_list_flatten(arena, &t));
 }
