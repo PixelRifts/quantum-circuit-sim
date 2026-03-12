@@ -6,10 +6,22 @@
 #include "defines.h"
 #include "base/str.h"
 
+
+typedef struct MQ_Instruction MQ_Instruction;
+
+typedef struct MQ_Circuit MQ_Circuit;
+struct MQ_Circuit {
+    u32 qubit_count;
+    u32 classical_count;
+    
+    u32 len;
+    u32 cap;
+    MQ_Instruction* instructions;
+};
+
+
 typedef enum MQ_InstrType {
     MQ_Instr_Gate,
-    MQ_Instr_ControlOn,
-    MQ_Instr_ControlOff,
     MQ_Instr_Measure,
     MQ_Instr_Reset,
     MQ_Instr_Barrier,
@@ -34,12 +46,58 @@ typedef enum MQ_GateType {
     MQ_Gate_U
 } MQ_GateType;
 
-typedef struct MQ_Instruction MQ_Instruction;
+//- Control Flow
+
+typedef enum MQ_CondType {
+    MQ_Cond_BitTrue,
+    MQ_Cond_BitFalse
+} MQ_CondType;
+
+typedef struct MQ_Condition {
+    MQ_CondType type;
+    u32 bit;
+} MQ_Condition;
+
+typedef enum MQ_FlowType {
+    MQ_Flow_If,
+    MQ_Flow_For,
+    MQ_Flow_While
+} MQ_FlowType;
+
+typedef struct MQ_FlowOp MQ_FlowOp;
+struct MQ_FlowOp {
+    MQ_FlowType type;
+    
+    union {
+        struct {
+            MQ_Condition cond;
+            MQ_Circuit then_body;
+            MQ_Circuit else_body;
+        } if_stmt;
+        
+        struct {
+            u32 iterations;
+            MQ_Circuit body;
+        } for_loop;
+        
+        struct {
+            MQ_Condition cond;
+            MQ_Circuit body;
+        } while_loop;
+    };
+};
+
+//- Instruction
+
 struct MQ_Instruction {
     MQ_InstrType type;
     
     u32 qubits[3];
     u8 qubit_count;
+    
+    u32 controls[8];
+    u8  control_states[8];
+    u8 control_count;
     
     u32 classical_bits[2];
     u8 classical_count;
@@ -50,33 +108,16 @@ struct MQ_Instruction {
     union {
         MQ_GateType gate;
         u32 circuit_ref;
+        MQ_FlowOp flow;
     };
 };
 
-typedef struct MQ_Circuit MQ_Circuit;
-struct MQ_Circuit {
-    u32 qubit_count;
-    u32 classical_count;
-    
-    u32 len;
-    u32 cap;
-    MQ_Instruction* instructions;
-};
 
-typedef enum FlowType {
-    MQ_Flow_If,
-    MQ_Flow_For,
-    MQ_Flow_While
-} MQ_FlowType;
 
-typedef struct MQ_FlowOp MQ_FlowOp;
-struct MQ_FlowOp {
-    MQ_FlowType type;
-    u32 classical_bit;
-    MQ_Circuit body;
-};
+
+
 
 string mq_ir_to_string(M_Arena* arena, MQ_Circuit* c);
-void example_ir_dump(M_Arena* arena);
+void   example_ir_dump(M_Arena* arena);
 
 #endif //IR_H

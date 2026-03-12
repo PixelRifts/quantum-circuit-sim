@@ -3,8 +3,6 @@
 static const char* mq_instr_type_str(MQ_InstrType t) {
     switch (t) {
         case MQ_Instr_Gate:       return "Gate";
-        case MQ_Instr_ControlOn:  return "ControlOn";
-        case MQ_Instr_ControlOff: return "ControlOff";
         case MQ_Instr_Measure:    return "Measure";
         case MQ_Instr_Reset:      return "Reset";
         case MQ_Instr_Barrier:    return "Barrier";
@@ -55,12 +53,13 @@ string mq_ir_to_string(M_Arena* arena, MQ_Circuit* c) {
                                              mq_gate_type_str(ins->gate)));
         } else if (ins->type == MQ_Instr_Call) {
             string_list_push(arena, &list,
-                             str_from_format(arena, "call:%u, ",
+                             str_from_format(arena, "call: %u, ",
                                              ins->circuit_ref));
         } else {
             string_list_push(arena, &list, str_lit("-, "));
         }
         
+        /* targets */
         string_list_push(arena, &list, str_lit("q=["));
         for (u32 q = 0; q < ins->qubit_count; q++) {
             string_list_push(arena, &list,
@@ -70,6 +69,18 @@ string mq_ir_to_string(M_Arena* arena, MQ_Circuit* c) {
         }
         string_list_push(arena, &list, str_lit("], "));
         
+        /* controls */
+        string_list_push(arena, &list, str_lit("ctrl=["));
+        for (u32 c = 0; c < ins->control_count; c++) {
+            string_list_push(arena, &list,
+                             str_from_format(arena, "%u:%u",
+                                             ins->controls[c], ins->control_states[c]));
+            if (c + 1 < ins->control_count)
+                string_list_push(arena, &list, str_lit(","));
+        }
+        string_list_push(arena, &list, str_lit("], "));
+        
+        /* params */
         string_list_push(arena, &list, str_lit("p=["));
         for (u32 p = 0; p < ins->param_count; p++) {
             string_list_push(arena, &list,
@@ -79,6 +90,7 @@ string mq_ir_to_string(M_Arena* arena, MQ_Circuit* c) {
         }
         string_list_push(arena, &list, str_lit("], "));
         
+        /* classical bits */
         string_list_push(arena, &list, str_lit("c=["));
         for (u32 b = 0; b < ins->classical_count; b++) {
             string_list_push(arena, &list,
@@ -93,12 +105,42 @@ string mq_ir_to_string(M_Arena* arena, MQ_Circuit* c) {
 }
 
 void example_ir_dump(M_Arena* arena) {
+    
+    /* ---------- Subcircuit (id = 1) ---------- */
+    MQ_Circuit bell = {0};
+    bell.qubit_count = 2;
+    bell.classical_count = 0;
+    bell.len = 2;
+    bell.cap = 2;
+    bell.instructions = arena_alloc(arena, sizeof(MQ_Instruction) * bell.cap);
+    
+    // H(q0)
+    bell.instructions[0] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_H,
+        .qubits = {0},
+        .qubit_count = 1
+    };
+    
+    // CX(q0 -> q1)
+    bell.instructions[1] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_X,
+        .qubits = {1},
+        .qubit_count = 1,
+        .controls = {0},
+        .control_states = {1},
+        .control_count = 1
+    };
+    
+    
+    /* ---------- Main Circuit (id = 0) ---------- */
     MQ_Circuit c = {0};
     
-    c.qubit_count = 2;
-    c.classical_count = 1;
-    c.len = 4;
-    c.cap = 4;
+    c.qubit_count = 4;
+    c.classical_count = 3;
+    c.len = 10;
+    c.cap = 10;
     c.instructions = arena_alloc(arena, sizeof(MQ_Instruction) * c.cap);
     
     // H(q0)
@@ -106,34 +148,97 @@ void example_ir_dump(M_Arena* arena) {
         .type = MQ_Instr_Gate,
         .gate = MQ_Gate_H,
         .qubits = {0},
-        .qubit_count = 1,
+        .qubit_count = 1
     };
     
-    // ControlOn(q0)
+    // RX(0.5) q1
     c.instructions[1] = (MQ_Instruction){
-        .type = MQ_Instr_ControlOn,
-        .qubits = {0},
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_RX,
+        .qubits = {1},
         .qubit_count = 1,
+        .params = {0.5},
+        .param_count = 1
     };
     
-    // X(q1)  -> controlled by q0
+    // Controlled Z (q0 -> q1)
     c.instructions[2] = (MQ_Instruction){
         .type = MQ_Instr_Gate,
-        .gate = MQ_Gate_X,
+        .gate = MQ_Gate_Z,
         .qubits = {1},
         .qubit_count = 1,
+        .controls = {0},
+        .control_states = {1},
+        .control_count = 1
     };
     
-    // Measure(q1 -> c0)
+    // SWAP(q2,q3)
     c.instructions[3] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_SWAP,
+        .qubits = {2,3},
+        .qubit_count = 2
+    };
+    
+    // ISWAP(q1,q2)
+    c.instructions[4] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_ISWAP,
+        .qubits = {1,2},
+        .qubit_count = 2
+    };
+    
+    // RZZ(1.2) between q0 and q3
+    c.instructions[5] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_RZZ,
+        .qubits = {0,3},
+        .qubit_count = 2,
+        .params = {1.2},
+        .param_count = 1
+    };
+    
+    // X(q2) with negative control q1==0
+    c.instructions[6] = (MQ_Instruction){
+        .type = MQ_Instr_Gate,
+        .gate = MQ_Gate_X,
+        .qubits = {2},
+        .qubit_count = 1,
+        .controls = {1},
+        .control_states = {0},
+        .control_count = 1
+    };
+    
+    // Call subcircuit (Bell pair generator)
+    c.instructions[7] = (MQ_Instruction){
+        .type = MQ_Instr_Call,
+        .circuit_ref = 1
+    };
+    
+    // Measure q2 -> c0
+    c.instructions[8] = (MQ_Instruction){
         .type = MQ_Instr_Measure,
-        .qubits = {1},
+        .qubits = {2},
         .qubit_count = 1,
         .classical_bits = {0},
-        .classical_count = 1,
+        .classical_count = 1
     };
     
-    string dump = mq_ir_to_string(arena, &c);
+    // Measure q3 -> c1
+    c.instructions[9] = (MQ_Instruction){
+        .type = MQ_Instr_Measure,
+        .qubits = {3},
+        .qubit_count = 1,
+        .classical_bits = {1},
+        .classical_count = 1
+    };
     
-    printf("%.*s\n", str_expand(dump));
+    
+    /* ---------- Dump ---------- */
+    string dump_main = mq_ir_to_string(arena, &c);
+    string dump_sub  = mq_ir_to_string(arena, &bell);
+    
+    printf("MAIN CIRCUIT\n%.*s\n", str_expand(dump_main));
+    printf("SUBCIRCUIT 1 (Bell)\n%.*s\n", str_expand(dump_sub));
+    
 }

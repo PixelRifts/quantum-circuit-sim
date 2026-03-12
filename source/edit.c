@@ -8,7 +8,9 @@
 
 #include "client/tri_render.h"
 
-const char* get_qiskit_gate_class(GateType gate) {
+#include "ir.h"
+
+static const char* get_qiskit_gate_class(GateType gate) {
     switch (gate) {
         case Gate_H:  return "HGate";
         case Gate_PX: return "XGate";
@@ -21,7 +23,7 @@ const char* get_qiskit_gate_class(GateType gate) {
 }
 
 // Helper to map Enum to simple function calls (for non-controlled ops)
-const char* get_qiskit_func_name(GateType gate) {
+static const char* get_qiskit_func_name(GateType gate) {
     switch (gate) {
         case Gate_H:  return "h";
         case Gate_PX: return "x";
@@ -172,6 +174,97 @@ void CircuitEmitAsPython(Circuit* circuit, string filename) {
     
     OS_FileCreateWrite(filename, string_list_flatten(&scratch.arena, &output));
     scratch_return(&scratch);
+}
+
+static MQ_GateType gate_map(GateType g) {
+    switch (g) {
+        case Gate_H:  return MQ_Gate_H;
+        case Gate_PX: return MQ_Gate_X;
+        case Gate_PY: return MQ_Gate_Y;
+        case Gate_PZ: return MQ_Gate_Z;
+        case Gate_S:  return MQ_Gate_S;
+        case Gate_T:  return MQ_Gate_T;
+    }
+    return MQ_Gate_X;
+}
+
+static void mq_instr_push(MQ_Circuit* c, MQ_Instruction instr) {
+    if (c->len >= c->cap) {
+        c->cap = c->cap ? c->cap * 2 : 32;
+        c->instructions = realloc(c->instructions,
+                                  sizeof(MQ_Instruction) * c->cap);
+    }
+    c->instructions[c->len++] = instr;
+}
+
+void CircuitEmitAsIR(Circuit* circuit, string filename) {
+    MQ_Circuit ir = {0};
+    ir.qubit_count = circuit->qubit_count;
+    ir.classical_count = 0;
+    ir.cap = 64;
+    ir.instructions = malloc(sizeof(MQ_Instruction) * ir.cap);
+    
+    for (u32 s = 0; s < circuit->len; s++) {
+        OperatorSlice* slice = &circuit->slices[s];
+        
+        u32 controls[64];
+        u8 control_states[64];
+        u32 control_count = 0;
+        
+        /* collect controls in this slice */
+        for (u32 q = 0; q < slice->len; q++) {
+            Operator* op = &slice->ops[q];
+            
+            if (op->type == OpType_ControlOn) {
+                controls[control_count] = q;
+                control_states[control_count] = 1;
+                control_count++;
+            }
+            else if (op->type == OpType_ControlOff) {
+                controls[control_count] = q;
+                control_states[control_count] = 0;
+                control_count++;
+            }
+        }
+        
+        /* emit instructions */
+        for (u32 q = 0; q < slice->len; q++) {
+            Operator* op = &slice->ops[q];
+            
+            if (op->type == OpType_Gate1) {
+                
+                MQ_Instruction instr = {0};
+                instr.type = MQ_Instr_Gate;
+                instr.gate = gate_map(op->gate);
+                
+                instr.qubits[0] = q;
+                instr.qubit_count = 1;
+                
+                for (u32 c = 0; c < control_count; c++) {
+                    instr.controls[c] = controls[c];
+                    instr.control_states[c] = control_states[c];
+                }
+                instr.control_count = control_count;
+                
+                mq_instr_push(&ir, instr);
+            }
+            
+            if (op->type == OpType_Inspect) {
+                mq_instr_push(&ir, (MQ_Instruction){
+                                  .type = MQ_Instr_Measure,
+                                  .qubits = {q},
+                                  .qubit_count = 1,
+                                  .classical_bits = {q},
+                                  .classical_count = 1
+                              });
+            }
+        }
+    }
+    
+    M_Scratch s = scratch_get();
+    string ir_text = mq_ir_to_string(&s.arena, &ir);
+    OS_FileCreateWrite(filename, ir_text);
+    scratch_return(&s);
 }
 
 
@@ -827,8 +920,13 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
     }
     
     if (OS_InputKey(GLFW_KEY_LEFT_CONTROL) && OS_InputKeyPressed(GLFW_KEY_S)) {
-        printf("Saved Circuit to test.py\n"); flush;
-        CircuitEmitAsPython(&ctx->circuit, str_lit("test.py"));
+        if (OS_InputKey(GLFW_KEY_LEFT_SHIFT)) {
+            printf("Saved Circuit to circuit.mq\n"); flush;
+            CircuitEmitAsIR(&ctx->circuit, str_lit("circuit.mq"));
+        } else {
+            printf("Saved Circuit to circuit.py\n"); flush;
+            CircuitEmitAsPython(&ctx->circuit, str_lit("circuit.py"));
+        }
     }
     
     if (OS_InputKey(GLFW_KEY_LEFT_CONTROL) && OS_InputKeyPressed(GLFW_KEY_P)) {
