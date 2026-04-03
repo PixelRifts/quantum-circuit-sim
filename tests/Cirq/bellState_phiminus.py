@@ -3,12 +3,13 @@ import pprint
 
 q0, q1 = cirq.LineQubit.range(2)
 
-circuit = cirq.Circuit(
-    cirq.H(q0),
-    cirq.CNOT(q0, q1),
-    cirq.Z(q0),
-    cirq.measure(q0, q1, key='m')
-)
+circuit = cirq.Circuit()
+
+circuit.append(cirq.H(q0))
+circuit.append(cirq.CNOT(q0, q1))
+circuit.append(cirq.Z(q0))
+
+circuit.append(cirq.measure(q0, q1, key='m'))
 
 sim = cirq.Simulator()
 result = sim.run(circuit, repetitions=16384)
