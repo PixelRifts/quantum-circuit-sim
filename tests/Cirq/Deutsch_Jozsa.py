@@ -7,11 +7,15 @@ circuit = cirq.Circuit()
 
 circuit.append(cirq.X(q2))
 
-circuit.append([cirq.H(q0), cirq.H(q1), cirq.H(q2)])
+circuit.append(cirq.H(q0))
+circuit.append(cirq.H(q1))
+circuit.append(cirq.H(q2))
 
-circuit.append([cirq.CNOT(q0, q2), cirq.CNOT(q1, q2)])
+circuit.append(cirq.CNOT(q0, q2))
+circuit.append(cirq.CNOT(q1, q2))
 
-circuit.append([cirq.H(q0), cirq.H(q1)])
+circuit.append(cirq.H(q0))
+circuit.append(cirq.H(q1))
 
 circuit.append(cirq.measure(q0, q1, key='m'))
 
