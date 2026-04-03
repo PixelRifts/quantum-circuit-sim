@@ -5,12 +5,20 @@ q0, q1, q2 = cirq.LineQubit.range(3)
 
 circuit = cirq.Circuit()
 
-circuit.append([cirq.H(q1), cirq.CNOT(q1, q2)])
-circuit.append([cirq.CNOT(q0, q1), cirq.H(q0)])
+# Bell pair
+circuit.append(cirq.H(q1))
+circuit.append(cirq.CNOT(q1, q2))
 
+# Entangle message
+circuit.append(cirq.CNOT(q0, q1))
+circuit.append(cirq.H(q0))
+
+# Measure
 circuit.append(cirq.measure(q0, q1, key='m'))
 
-circuit.append([cirq.CNOT(q1, q2), cirq.CZ(q0, q2)])
+# Correction
+circuit.append(cirq.CNOT(q1, q2))
+circuit.append(cirq.CZ(q0, q2))
 
 circuit.append(cirq.measure(q2, key='res'))
 
