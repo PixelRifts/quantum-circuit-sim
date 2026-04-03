@@ -5,11 +5,8 @@ from qiskit.circuit.library import XGate, YGate, ZGate, HGate, SGate, TGate
 
 qc = QuantumCircuit(3)
 qc.h(0)
-qc.append(SGate().control(1, ctrl_state='1'), [1, 0])
-qc.append(TGate().control(1, ctrl_state='1'), [2, 0])
-qc.h(1)
-qc.append(SGate().control(1, ctrl_state='1'), [2, 1])
-qc.h(2)
+qc.cx(0,1)
+qc.cx(0,2)
 
 qc.measure_all()
 simulator = AerSimulator()
