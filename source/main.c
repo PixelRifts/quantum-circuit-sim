@@ -15,7 +15,9 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "ir.h"
+#include "translate/ir.h"
+
+#include <tree_sitter/api.h>
 
 int main() {
     OS_Init();
@@ -26,9 +28,12 @@ int main() {
     
     M_Arena systems_arena = {0};
     arena_init(&systems_arena);
-    
     srand(time(0));
-    example_ir_dump(&systems_arena);
+    
+    
+    
+    
+    
     
     Rift_Window window = {0};
     Rift_WindowCreate(&window, (Rift_WindowProps) {

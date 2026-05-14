@@ -1,5 +1,3 @@
-
-
 MAIN CIRCUIT
 Circuit(qubits=4, classical=3)
 0: (Gate, H, q=[0], ctrl=[], p=[], c=[])
@@ -9,8 +7,8 @@ Circuit(qubits=4, classical=3)
 4: (Gate, ISWAP, q=[1,2], ctrl=[], p=[], c=[])
 5: (Gate, RZZ, q=[0,3], ctrl=[], p=[1.200000], c=[])
 6: (Gate, X, q=[2], ctrl=[1:0], p=[], c=[])
-7: (Measure, -, q=[2], ctrl=[], p=[], c=[0])
-8: (Call, call: 1, q=[], ctrl=[0:1], p=[], c=[])
+7: (Call, call: 1, q=[], ctrl=[], p=[], c=[])
+8: (Measure, -, q=[2], ctrl=[], p=[], c=[0])
 9: (Measure, -, q=[3], ctrl=[], p=[], c=[1])
 
 Circuit(qubits=2, classical=0)
