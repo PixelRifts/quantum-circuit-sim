@@ -18,6 +18,7 @@
 #include "translate/ir.h"
 
 #include <tree_sitter/api.h>
+#include "translate/qsharp.h"
 
 int main() {
     OS_Init();
@@ -30,8 +31,16 @@ int main() {
     arena_init(&systems_arena);
     srand(time(0));
     
+    //uncomment to test Q# parsing
     
-    
+//     QS_ParseResult qs = qs_parse_file("tests/Q#/QFT.qs");
+// if (qs.ok) {
+//     qs_print_tree(&qs);
+//     qs_print_named_nodes(&qs);
+//     qs_parse_result_free(&qs);
+// } else {
+//     printf("[main] Q# parse failed\n");
+// }
     
     
     
