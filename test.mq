@@ -1,17 +1,64 @@
-MAIN CIRCUIT
-Circuit(qubits=4, classical=3)
-0: (Gate, H, q=[0], ctrl=[], p=[], c=[])
-1: (Gate, RX, q=[1], ctrl=[], p=[0.500000], c=[])
-2: (Gate, Z, q=[1], ctrl=[0:1], p=[], c=[])
-3: (Gate, SWAP, q=[2,3], ctrl=[], p=[], c=[])
-4: (Gate, ISWAP, q=[1,2], ctrl=[], p=[], c=[])
-5: (Gate, RZZ, q=[0,3], ctrl=[], p=[1.200000], c=[])
-6: (Gate, X, q=[2], ctrl=[1:0], p=[], c=[])
-7: (Call, call: 1, q=[], ctrl=[], p=[], c=[])
-8: (Measure, -, q=[2], ctrl=[], p=[], c=[0])
-9: (Measure, -, q=[3], ctrl=[], p=[], c=[1])
+PROGRAM "mq_test" [MQ] version=0.3.0
 
-Circuit(qubits=2, classical=0)
-0: (Gate, H, q=[0], ctrl=[], p=[], c=[])
-1: (Gate, X, q=[1], ctrl=[0:1], p=[], c=[])
+  ROUTINE "h_rz" Gate
+    // Apply H then RZ(angle) to qubit 0
+    params: angle:angle
+    returns: void
+    BODY
+      H [0]
+      RZ(angle) [0]
+
+  ROUTINE "cx_intrinsic" Gate [intrinsic: CX]
+
+  CIRCUIT "bell" qubits=2 cbits=2 global_phase=0
+    registers:
+      Q "q" size=2 base=0
+      C "c" size=2 base=0
+    BODY
+      H [0]
+      X [1] ctrl=[0:|1>]
+      MEASURE [0] -> c[0]
+      MEASURE [1] -> c[1]
+      IF ((c[0] == 1)) {
+        X [0]
+      }
+      ELSE {
+        I [0]
+      }
+
+  CIRCUIT "advanced" qubits=3 cbits=1 global_phase=0
+    registers:
+      Q "q" size=3 base=0
+      C "c" size=1 base=0
+    params: theta
+    BODY
+      // advanced circuit test
+      #pragma optimization_level 2
+      PARAM theta
+      LET i : int64 = 0
+      LET phi : angle = sin(theta)
+      RZ(theta) [0]
+      U(theta, phi, 0) [1]
+      CCX [0] [1] [2]
+      my_gate [0]
+      MEASURE [2] -> c[0]
+      S [0] if(c[0] == 1)
+      BARRIER [0] [1]
+      ADJOINT {
+        H [0]
+        T [1]
+      }
+      DELAY 100ns [0]
+      RESET [1]
+      MEASURE [0] (discard)
+      FOR i IN range(3) {
+        H [0]
+      }
+      i += 1
+      WHILE ((i < 3)) {
+        H [0]
+        BREAK
+      }
+      h_rz(theta)
+      RETURN
 

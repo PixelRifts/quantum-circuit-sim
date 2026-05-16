@@ -30,10 +30,7 @@ int main() {
     arena_init(&systems_arena);
     srand(time(0));
     
-    
-    
-    
-    
+    mq_ir_test(&systems_arena, str_lit("test.mq"));
     
     Rift_Window window = {0};
     Rift_WindowCreate(&window, (Rift_WindowProps) {
