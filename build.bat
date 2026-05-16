@@ -16,7 +16,7 @@ FOR %%f in (source\os\*.c) do SET c_filenames=!c_filenames! %%f
 FOR %%f in (source\client\*.c) do SET c_filenames=!c_filenames! %%f
 FOR %%f in (source\translate\*.c) do SET c_filenames=!c_filenames! %%f
 
-
+FOR %%f in (source\translate\*.c) do SET c_filenames=!c_filenames! %%f
 FOR %%f in (third_party\source\*.c) do SET c_filenames=!c_filenames! %%f
 REM ==============
 

@@ -18,6 +18,7 @@
 #include "translate/ir.h"
 
 #include <tree_sitter/api.h>
+#include "translate/qsharp.h"
 
 int main() {
     OS_Init();
@@ -31,6 +32,19 @@ int main() {
     srand(time(0));
     
     mq_ir_test(&systems_arena, str_lit("test.mq"));
+    
+    //uncomment to test Q# parsing
+    
+    //     QS_ParseResult qs = qs_parse_file("tests/Q#/QFT.qs");
+    // if (qs.ok) {
+    //     qs_print_tree(&qs);
+    //     qs_print_named_nodes(&qs);
+    //     qs_parse_result_free(&qs);
+    // } else {
+    //     printf("[main] Q# parse failed\n");
+    // }
+    
+    
     
     Rift_Window window = {0};
     Rift_WindowCreate(&window, (Rift_WindowProps) {
