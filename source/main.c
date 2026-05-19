@@ -17,14 +17,9 @@
 
 #include "translate/mql.h"
 #include "translate/ir.h"
-
-#include <tree_sitter/api.h>
 #include "translate/qsharp.h"
 #include "translate/qiskit.h"
 #include "translate/cirq.h"
-
-void run_editor(M_Arena* systems_arena);
-
 
 static string read_file(const char *path)
 {
@@ -55,44 +50,6 @@ static string read_file(const char *path)
     buf[read] = '\0';
     return (string) {.str = (u8*)buf, .size = read};
 }
-
-int main() {
-    OS_Init();
-	
-    ThreadContext context = {0};
-    tctx_init(&context);
-    U_FrameArenaInit();
-    
-    M_Arena systems_arena = {0};
-    arena_init(&systems_arena);
-    srand(time(0));
-    
-    MQL_Parser parser;
-    mql_parser_init(&parser, &systems_arena, read_file("test.mql"));
-    MQ_Program* prog = mql_parse_program(&parser);
-    
-    if (parser.errors) {
-        while (parser.errors) {
-            printf("Error: %d:%d : %.*s error\n", parser.errors->line, parser.errors->col,
-                   str_expand(parser.errors->message));
-            parser.errors = parser.errors->next;
-        }
-    } else {
-        
-        FILE* f = fopen("test.mq", "w");
-        mq_program_write(f, prog);
-        fclose(f);
-    }
-    
-    
-    //run_editor(&systems_arena);
-    
-    
-    arena_free(&systems_arena);
-    U_FrameArenaFree();
-	tctx_free(&context);
-}
-
 
 void run_editor(M_Arena* systems_arena) {
     Rift_Window window = {0};
@@ -159,3 +116,315 @@ void run_editor(M_Arena* systems_arena) {
     Rift_WindowDestroy(&window);
     
 }
+
+
+//-
+
+typedef enum FileFormat {
+    Fmt_None,
+    Fmt_MQ,
+    Fmt_MQL,
+    Fmt_Qiskit,
+    Fmt_Cirq,
+    Fmt_QSharp,
+} FileFormat;
+
+
+static FileFormat fmt_from_name(const char *name) {
+    if (strcmp(name, "mql")    == 0) return Fmt_MQL;
+    if (strcmp(name, "mq")     == 0) return Fmt_MQ;
+    if (strcmp(name, "qiskit") == 0) return Fmt_Qiskit;
+    if (strcmp(name, "cirq")   == 0) return Fmt_Cirq;
+    if (strcmp(name, "qsharp") == 0) return Fmt_QSharp;
+    return Fmt_None;
+}
+
+static const char *fmt_name(FileFormat f) {
+    switch (f) {
+        case Fmt_MQL:    return "mql";
+        case Fmt_MQ:     return "mq";
+        case Fmt_Qiskit: return "qiskit";
+        case Fmt_Cirq:   return "cirq";
+        case Fmt_QSharp: return "qsharp";
+        default:         return "unknown";
+    }
+}
+
+static FileFormat fmt_from_ext(const char *path) {
+    const char *dot = strrchr(path, '.');
+    if (!dot) return Fmt_None;
+    if (strcmp(dot, ".mql") == 0) return Fmt_MQL;
+    if (strcmp(dot, ".mq")  == 0) return Fmt_MQ;
+    if (strcmp(dot, ".qs")  == 0) return Fmt_QSharp;
+    // .py is intentionally left as Fmt_None -- caller must require --from/--to
+    return Fmt_None;
+}
+
+static void usage(const char *argv0) {
+    fprintf(stderr,
+            "usage: %s [options] <input>\n"
+            "\n"
+            "  --from <fmt>   force input format\n"
+            "  --to   <fmt>   force output format\n"
+            "  -o <file>      output file (stdout if omitted)\n"
+            "  --editor       open editor UI\n"
+            "\n"
+            "formats: mql  qiskit  cirq  qsharp  mq\n"
+            "\n"
+            "  mql    MetaQ source  (.mql)  -- input only\n"
+            "  mq     MQ IR dump   (.mq)   -- output only\n"
+            "  qiskit Qiskit        (.py)\n"
+            "  cirq   Cirq          (.py)\n"
+            "  qsharp Q#            (.qs)\n"
+            "\n"
+            "note: .py is ambiguous; --from / --to is required when using Python files\n"
+            "\n"
+            "examples:\n"
+            "  %s prog.mql -o out.qs\n"
+            "  %s --from qiskit bell.py -o bell.qs\n"
+            "  %s --from cirq sim.py --to qiskit -o out.py\n",
+            argv0, argv0, argv0, argv0);
+}
+
+
+int main(int argc, char **argv) {
+    OS_Init();
+    
+    ThreadContext context = {0};
+    tctx_init(&context);
+    U_FrameArenaInit();
+    
+    M_Arena systems_arena = {0};
+    arena_init(&systems_arena);
+    srand(time(0));
+    
+    // ==== Argument Parsing ====
+    const char *input_path  = 0;
+    const char *output_path = 0;
+    FileFormat  forced_in   = Fmt_None;
+    FileFormat  forced_out  = Fmt_None;
+    int         open_editor = 0;
+    
+    // Sorry for what i have done
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--editor") == 0) {
+            open_editor = 1;
+            
+        } else if (strcmp(argv[i], "--from") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --from requires an argument\n");
+                usage(argv[0]);
+                return 1;
+            }
+            forced_in = fmt_from_name(argv[++i]);
+            if (forced_in == Fmt_None) {
+                fprintf(stderr, "error: unknown format '%s'\n", argv[i]);
+                usage(argv[0]);
+                return 1;
+            }
+            if (forced_in == Fmt_MQ) {
+                fprintf(stderr, "error: 'mq' is an IR dump and cannot be used as input\n");
+                return 1;
+            }
+            
+        } else if (strcmp(argv[i], "--to") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --to requires an argument\n");
+                usage(argv[0]);
+                return 1;
+            }
+            forced_out = fmt_from_name(argv[++i]);
+            if (forced_out == Fmt_None) {
+                fprintf(stderr, "error: unknown format '%s'\n", argv[i]);
+                usage(argv[0]);
+                return 1;
+            }
+            if (forced_out == Fmt_MQL) {
+                fprintf(stderr, "error: 'mql' is a source format and cannot be used as output\n");
+                return 1;
+            }
+            
+        } else if (strcmp(argv[i], "-o") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: -o requires an argument\n");
+                usage(argv[0]);
+                return 1;
+            }
+            output_path = argv[++i];
+            
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
+            usage(argv[0]);
+            return 1;
+            
+        } else {
+            if (input_path) {
+                fprintf(stderr, "error: multiple input files specified\n");
+                usage(argv[0]);
+                return 1;
+            }
+            input_path = argv[i];
+        }
+    }
+    
+    
+    // ==== editor mode ====
+    if (open_editor) {
+        run_editor(&systems_arena);
+        goto cleanup;
+    }
+    
+    // ==== all other modes ====
+    if (!input_path) {
+        fprintf(stderr, "error: no input file specified\n");
+        usage(argv[0]);
+        return 1;
+    }
+    
+    // ==== resolve input format ====
+    FileFormat in_fmt = forced_in;
+    
+    if (in_fmt == Fmt_None) {
+        in_fmt = fmt_from_ext(input_path);
+        if (in_fmt == Fmt_None) {
+            // Check specifically for .py to give a targeted error
+            const char *dot = strrchr(input_path, '.');
+            if (dot && strcmp(dot, ".py") == 0) {
+                fprintf(stderr,
+                        "error: cannot infer input format from '.py' "
+                        "(both Qiskit and Cirq use Python)\n"
+                        "       use --from qiskit  or  --from cirq\n");
+            } else {
+                fprintf(stderr,
+                        "error: cannot infer input format from '%s'\n"
+                        "       use --from <fmt>\n", input_path);
+            }
+            return 1;
+        }
+    }
+    
+    // ==== resolve output format ====
+    FileFormat out_fmt = forced_out;
+    
+    if (out_fmt == Fmt_None && output_path) {
+        out_fmt = fmt_from_ext(output_path);
+        if (out_fmt == Fmt_None) {
+            const char *dot = strrchr(output_path, '.');
+            if (dot && strcmp(dot, ".py") == 0) {
+                fprintf(stderr,
+                        "error: cannot infer output format from '.py' "
+                        "(both Qiskit and Cirq use Python)\n"
+                        "       use --to qiskit  or  --to cirq\n");
+            } else {
+                fprintf(stderr,
+                        "error: cannot infer output format from '%s'\n"
+                        "       use --to <fmt>\n", output_path);
+            }
+            return 1;
+        }
+    }
+    
+    if (out_fmt == Fmt_None)
+        out_fmt = Fmt_MQ;
+    
+    // ==== parser ====
+    string src = read_file(input_path);
+    MQ_Program *prog  = 0;
+    
+    switch (in_fmt) {
+        case Fmt_MQL:
+        case Fmt_None:  {
+            MQL_Parser parser;
+            mql_parser_init(&parser, &systems_arena, src);
+            prog = mql_parse_program(&parser);
+            if (parser.errors) {
+                for (MQL_Error *e = parser.errors; e; e = e->next)
+                    fprintf(stderr, "%s:%d:%d: error: %.*s\n",
+                            input_path, e->line, e->col, str_expand(e->message));
+                return 1;
+            }
+        } break;
+        
+        case Fmt_Qiskit: {
+            // prog =  @call qiskit_parse
+            fprintf(stderr, "Qiskit input is currently unimplemented\n");
+            if (!prog) {
+                fprintf(stderr, "%s: error: Qiskit parse failed\n", input_path);
+                return 1;
+            }
+        } break;
+        
+        case Fmt_Cirq: {
+            // prog = @call cirq_parse
+            fprintf(stderr, "Cirq input is currently unimplemented\n");
+            if (!prog) {
+                fprintf(stderr, "%s: error: Cirq parse failed\n", input_path);
+                return 1;
+            }
+        } break;
+        
+        case Fmt_QSharp: {
+            // prog = @call qsharp_parse
+            fprintf(stderr, "Qsharp input is currently unimplemented\n");
+            if (!prog) {
+                fprintf(stderr, "%s: error: Q# parse failed\n", input_path);
+                return 1;
+            }
+        } break;
+        
+        case Fmt_MQ: {
+            fprintf(stderr, "%s: error: .mq is an IR dump and cannot be used as input\n",
+                    input_path);
+        } return 1;
+    }
+    
+    
+    // Output
+    FILE *out = stdout;
+    if (output_path) {
+        out = fopen(output_path, "w");
+        if (!out) {
+            fprintf(stderr, "error: could not open output file '%s'\n", output_path);
+            return 1;
+        }
+    }
+    
+    switch (out_fmt) {
+        case Fmt_MQ:
+        case Fmt_None: {
+            mq_program_write(out, prog);
+        } break;
+        
+        case Fmt_Qiskit: {
+            // @call qiskit_emit(out, prog);
+            fprintf(stderr, "Qiskit output is currently unimplemented\n");
+        } break;
+        
+        case Fmt_Cirq: {
+            // @call cirq_emit(out, prog);
+            fprintf(stderr, "Cirq output is currently unimplemented\n");
+        } break;
+        
+        case Fmt_QSharp: {
+            // @call qsharp_emit(out, prog);
+            fprintf(stderr, "Qsharp output is currently unimplemented\n");
+        } break;
+        
+        case Fmt_MQL: {
+            fprintf(stderr, "error: .mql is a source format and cannot be used as output\n");
+            if (output_path) fclose(out);
+        } return 1;
+    }
+    
+    if (output_path) fclose(out);
+    
+    
+    cleanup:
+    arena_free(&systems_arena);
+    U_FrameArenaFree();
+    tctx_free(&context);
+    return 0;
+}
+
+
+

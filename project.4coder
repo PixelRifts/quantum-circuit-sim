@@ -55,7 +55,7 @@ command_list = {
 		.cursor_at_end = true,
 		.cmd =
 		{
-			{ "bin\composer.exe", .os = "win" },
+			{ "bin\composer.exe --editor", .os = "win" },
 			{ "bin/composer", .os = "linux" },
 		},
 	},
