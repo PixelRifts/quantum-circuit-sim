@@ -15,12 +15,46 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "translate/mql.h"
 #include "translate/ir.h"
 
 #include <tree_sitter/api.h>
 #include "translate/qsharp.h"
 #include "translate/qiskit.h"
 #include "translate/cirq.h"
+
+void run_editor(M_Arena* systems_arena);
+
+
+static string read_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "[qsharp] cannot open '%s'\n", path);
+        return (string){0};
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+    
+    if (size < 0) {
+        fclose(f);
+        return (string){0};
+    }
+    
+    char *buf = (char *)malloc((size_t)size + 1);
+    if (!buf) {
+        fclose(f);
+        return (string){0};
+    }
+    
+    size_t read = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    
+    buf[read] = '\0';
+    return (string) {.str = (u8*)buf, .size = read};
+}
 
 int main() {
     OS_Init();
@@ -33,50 +67,34 @@ int main() {
     arena_init(&systems_arena);
     srand(time(0));
     
-    mq_ir_test(&systems_arena, str_lit("test.mq"));
+    MQL_Parser parser;
+    mql_parser_init(&parser, &systems_arena, read_file("test.mql"));
+    MQ_Program* prog = mql_parse_program(&parser);
     
-    //uncomment to test Q# parsing
-    
-    //     QS_ParseResult qs = qs_parse_file("tests/Q#/QFT.qs");
-    // if (qs.ok) {
-    //     qs_print_tree(&qs);
-    //     qs_print_named_nodes(&qs);
-    //     qs_parse_result_free(&qs);
-    // } else {
-    //     printf("[main] Q# parse failed\n");
-    // }
-
-    //Qiskit test
-    // Qiskit_ParseResult py = py_parse_file("tests/Qiskit/GHZ_state_preparation.py");
-
-    // if (py.ok) {
-
-    //     py_print_tree(&py);
-
-    //     py_parse_result_free(&py);
-
-    // } else {
-
-    //     printf("[main] Python parse failed\n");
-    // }
-
-    // //Cirq test
-    // Cirq_ParseResult py = cirq_parse_file("tests/Cirq/QFT.py");
-
-    // if (py.ok) {
-
-    //     cirq_print_tree(&py);
-
-    //     cirq_parse_result_free(&py);
-
-    // } else {
-
-    //     printf("[main] Python parse failed\n");
-    // }
-
+    if (parser.errors) {
+        while (parser.errors) {
+            printf("Error: %d:%d : %.*s error\n", parser.errors->line, parser.errors->col,
+                   str_expand(parser.errors->message));
+            parser.errors = parser.errors->next;
+        }
+    } else {
+        
+        FILE* f = fopen("test.mq", "w");
+        mq_program_write(f, prog);
+        fclose(f);
+    }
     
     
+    //run_editor(&systems_arena);
     
+    
+    arena_free(&systems_arena);
+    U_FrameArenaFree();
+	tctx_free(&context);
+}
+
+
+void run_editor(M_Arena* systems_arena) {
     Rift_Window window = {0};
     Rift_WindowCreate(&window, (Rift_WindowProps) {
                           .width = 1080,
@@ -88,16 +106,16 @@ int main() {
     glClearColor(0.2, 0.2, 0.28, 1);
     glViewport(0, 0, 1080, 720);
     
-    Rift_UIContext* ctx = Rift_UIContextCreate(&systems_arena, 1080, 720);
+    Rift_UIContext* ctx = Rift_UIContextCreate(systems_arena, 1080, 720);
     
-    Rift_TriRenderer* trirenderer = Rift_TriRendererInit(&systems_arena, 1080, 720);
-    Rift_UISimpleRenderer* renderer = Rift_UIRendererInit(&systems_arena, 1080, 720);
+    Rift_TriRenderer* trirenderer = Rift_TriRendererInit(systems_arena, 1080, 720);
+    Rift_UISimpleRenderer* renderer = Rift_UIRendererInit(systems_arena, 1080, 720);
     Rift_UIFontLoad(renderer, "CascadiaCode");
     
     Rift_UIBox* content = Rift_WindowCustomTitlebar(&window, ctx, renderer, trirenderer);
     
     
-    EditContext* editor = EditorCreate(&systems_arena, ctx, content);
+    EditContext* editor = EditorCreate(systems_arena, ctx, content);
     
     float start = 0.0f;
     float end = 0.016f;
@@ -140,8 +158,4 @@ int main() {
     
     Rift_WindowDestroy(&window);
     
-    
-    arena_free(&systems_arena);
-    U_FrameArenaFree();
-	tctx_free(&context);
 }

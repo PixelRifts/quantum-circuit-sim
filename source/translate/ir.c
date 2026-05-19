@@ -1220,3 +1220,4 @@ void mq_ir_test(M_Arena *arena, string filename) {
     mq_program_write(f, prog);
     fclose(f);
 }
+

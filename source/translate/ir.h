@@ -815,7 +815,7 @@ void        mq_program_add_circuit(M_Arena *arena, MQ_Program *prog, MQ_Circuit 
 
 // Random stuff
 
-void mq_program_dump(FILE *filename, MQ_Program *prog);
+void mq_program_write(FILE *f, MQ_Program *prog);
 void mq_ir_test(M_Arena *arena, string filename);
 
 #endif //IR_H
