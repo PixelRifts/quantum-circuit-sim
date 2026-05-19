@@ -19,6 +19,8 @@
 
 #include <tree_sitter/api.h>
 #include "translate/qsharp.h"
+#include "translate/qiskit.h"
+#include "translate/cirq.h"
 
 int main() {
     OS_Init();
@@ -43,6 +45,35 @@ int main() {
     // } else {
     //     printf("[main] Q# parse failed\n");
     // }
+
+    //Qiskit test
+    // Qiskit_ParseResult py = py_parse_file("tests/Qiskit/GHZ_state_preparation.py");
+
+    // if (py.ok) {
+
+    //     py_print_tree(&py);
+
+    //     py_parse_result_free(&py);
+
+    // } else {
+
+    //     printf("[main] Python parse failed\n");
+    // }
+
+    // //Cirq test
+    // Cirq_ParseResult py = cirq_parse_file("tests/Cirq/QFT.py");
+
+    // if (py.ok) {
+
+    //     cirq_print_tree(&py);
+
+    //     cirq_parse_result_free(&py);
+
+    // } else {
+
+    //     printf("[main] Python parse failed\n");
+    // }
+
     
     
     
