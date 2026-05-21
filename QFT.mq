@@ -1,0 +1,27 @@
+PROGRAM "QSharpProgram" [Q#] version=0.3.0
+
+  CIRCUIT "Main" qubits=3 cbits=0 global_phase=0
+    registers:
+      Q "qs" size=3 base=0
+    BODY
+      // // allocate 3 qubits
+      Message("Initial state |000>:")
+      DumpMachine()
+      // // -------- QFT START --------
+      // // Qubit 0
+      H [0]
+      P((PI() / 2)) [0] ctrl=[1:|1>]
+      P((PI() / 4)) [0] ctrl=[2:|1>]
+      // // Qubit 1
+      H [1]
+      P((PI() / 2)) [1] ctrl=[2:|1>]
+      // // Qubit 2
+      H [2]
+      // // Swap qubits (reverse order)
+      SWAP [0] [2]
+      // // -------- QFT END --------
+      Message("After QFT:")
+      DumpMachine()
+      // // Reset qubits
+      ResetAll(qs)
+

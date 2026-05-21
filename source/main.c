@@ -364,10 +364,16 @@ int main(int argc, char **argv) {
         } break;
         
         case Fmt_QSharp: {
-            // prog = @call qsharp_parse
-            fprintf(stderr, "Qsharp input is currently unimplemented\n");
-            if (!prog) {
-                fprintf(stderr, "%s: error: Q# parse failed\n", input_path);
+            // 1. Run your frontend Tree-sitter parser pass
+            QS_ParseResult qs = qs_parse_file(input_path);
+            if (qs.ok) {
+                // 2. Lower the concrete syntax tree straight into your universal MQ_Program IR
+                prog = qsharp_tree_to_ir(&qs, &systems_arena);
+                
+                // 3. Free frontend configurations cleanly
+                qs_parse_result_free(&qs);
+            } else {
+                fprintf(stderr, "%s: error: Q# frontend parse failed\n", input_path);
                 return 1;
             }
         } break;
@@ -407,7 +413,8 @@ int main(int argc, char **argv) {
         
         case Fmt_QSharp: {
             // @call qsharp_emit(out, prog);
-            fprintf(stderr, "Qsharp output is currently unimplemented\n");
+            // fprintf(stderr, "Qsharp output is currently unimplemented\n");
+                qsharp_emit(out, prog);
         } break;
         
         case Fmt_MQL: {
