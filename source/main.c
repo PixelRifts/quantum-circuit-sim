@@ -345,14 +345,21 @@ int main(int argc, char **argv) {
             }
         } break;
         
-        case Fmt_Qiskit: {
-            // prog =  @call qiskit_parse
-            fprintf(stderr, "Qiskit input is currently unimplemented\n");
-            if (!prog) {
-                fprintf(stderr, "%s: error: Qiskit parse failed\n", input_path);
-                return 1;
-            }
-        } break;
+       
+            case Fmt_Qiskit: {
+    Qiskit_ParseResult qk = qiskit_parse_file(input_path);
+    if (qk.ok) {
+        prog = qiskit_tree_to_ir(&qk, &systems_arena);
+        qiskit_parse_result_free(&qk);
+    } else {
+        fprintf(stderr, "%s: error: Qiskit parse failed\n", input_path);
+        return 1;
+    }
+    if (!prog) {
+        fprintf(stderr, "%s: error: Qiskit IR lowering failed\n", input_path);
+        return 1;
+    }
+} break;
         
         case Fmt_Cirq: {
             // prog = @call cirq_parse
@@ -401,10 +408,9 @@ int main(int argc, char **argv) {
             mq_program_write(out, prog);
         } break;
         
-        case Fmt_Qiskit: {
-            // @call qiskit_emit(out, prog);
-            fprintf(stderr, "Qiskit output is currently unimplemented\n");
-        } break;
+       case Fmt_Qiskit: {
+    mq_ir_to_code(out, prog);
+} break;
         
         case Fmt_Cirq: {
             // @call cirq_emit(out, prog);

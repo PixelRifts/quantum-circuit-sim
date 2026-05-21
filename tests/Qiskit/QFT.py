@@ -21,4 +21,4 @@ qc = transpile(qc, simulator)
 result = simulator.run(qc, shots=16384).result()
 counts = result.get_counts()
 probs = {state: count / 16384 for state, count in counts.items()}
-pprint.pprint(probs)
+#pprint.pprint(probs)
