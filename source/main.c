@@ -411,7 +411,7 @@ int main(int argc, char **argv) {
         } break;
         
         case Fmt_MQL: {
-            fprintf(stderr, "error: .mql is a source format and cannot be used as output\n");
+            mql_emit(out, prog);
             if (output_path) fclose(out);
         } return 1;
     }

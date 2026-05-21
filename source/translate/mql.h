@@ -1,6 +1,8 @@
 #ifndef MQL_H
 #define MQL_H
 
+#include <stdio.h>
+
 #include "base/str.h"
 #include "ir.h"
 
@@ -187,6 +189,20 @@ typedef struct MQL_Error {
     struct MQL_Error *next;
 } MQL_Error;
 
+typedef enum MQL_SymKind {
+    MQL_Sym_Qubit,
+    MQL_Sym_Bit,
+} MQL_SymKind;
+
+typedef struct MQL_Symbol {
+    string      name;
+    MQL_SymKind kind;
+    u32         base_id;
+    u32         size;
+} MQL_Symbol;
+
+#define MQL_SCOPE_MAX 64
+
 typedef struct MQL_Parser {
     MQL_Lexer  lex;
     M_Arena   *arena;
@@ -194,12 +210,18 @@ typedef struct MQL_Parser {
     MQL_Error *errors_tail;
     b8         had_error;
     
-    // Running flat id counters assigned during parsing
-    u32        next_qubit_id;
-    u32        next_cbit_id;
+    // Symbol table for the current circuit/routine scope
+    MQL_Symbol scope[MQL_SCOPE_MAX];
+    u32        scope_count;
 } MQL_Parser;
 
 void mql_parser_init(MQL_Parser *p, M_Arena *arena, string src);
 MQ_Program *mql_parse_program(MQL_Parser *p);
+
+/* ======================================================================
+ * Emitter
+ * ====================================================================== */
+
+void mql_emit(FILE *out, MQ_Program *prog);
 
 #endif // MQL_H

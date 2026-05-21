@@ -424,6 +424,7 @@ MQ_Routine *mq_routine(M_Arena *arena, string name, MQ_RoutineKind kind,
     if (param_count > 0) {
         r->params = arena_alloc_array(arena, MQ_FormalParam, param_count);
         memcpy(r->params, params, sizeof(MQ_FormalParam) * param_count);
+        
     }
     return r;
 }
@@ -519,8 +520,81 @@ void mq_program_add_circuit(M_Arena *arena, MQ_Program *prog, MQ_Circuit *circui
 }
 
 
+// ============================================================
+// Qubit name table
+// ============================================================
 
-//- Testing stuff
+MQ_QubitNameTable mq_qubit_names_from_circuit(M_Arena *arena, MQ_Circuit *circuit) {
+    MQ_QubitNameTable t = {0};
+    if (!circuit || circuit->total_qubits == 0) return t;
+    
+    t.count = circuit->total_qubits;
+    t.names = arena_alloc_array(arena, string, t.count);
+    for (u32 i = 0; i < t.count; i++) t.names[i] = (string){0};
+    
+    for (u32 r = 0; r < circuit->register_count; r++) {
+        MQ_Register *reg = &circuit->registers[r];
+        if (reg->kind != MQ_Reg_Quantum) continue;
+        for (u32 i = 0; i < reg->size; i++) {
+            u32 id = reg->base_id + i;
+            if (id >= t.count) continue;
+            if (reg->size == 1) {
+                t.names[id] = reg->name;
+            } else {
+                // "regname[i]"
+                t.names[id] = str_from_format(arena, "%.*s[%u]",
+                                              str_expand(reg->name), i);
+            }
+        }
+    }
+    
+    return t;
+}
+
+MQ_QubitNameTable mq_qubit_names_from_routine(M_Arena *arena, MQ_Routine *routine) {
+    MQ_QubitNameTable t = {0};
+    if (!routine) return t;
+    
+    // Count total qubit slots from qubit-typed formal params
+    u32 total = 0;
+    for (u32 i = 0; i < routine->param_count; i++) {
+        MQ_Type *ty = routine->params[i].type;
+        if (!ty) continue;
+        if (ty->kind == MQ_Type_Qubit)    total += 1;
+        if (ty->kind == MQ_Type_QubitReg) total += ty->width ? ty->width : 1;
+    }
+    if (total == 0) return t;
+    
+    t.count = total;
+    t.names = arena_alloc_array(arena, string, total);
+    
+    u32 next_id = 0;
+    for (u32 i = 0; i < routine->param_count; i++) {
+        MQ_FormalParam *fp = &routine->params[i];
+        MQ_Type        *ty = fp->type;
+        if (!ty) continue;
+        if (ty->kind == MQ_Type_Qubit) {
+            t.names[next_id++] = fp->name;
+        } else if (ty->kind == MQ_Type_QubitReg) {
+            u32 width = ty->width ? ty->width : 1;
+            for (u32 j = 0; j < width; j++) {
+                t.names[next_id++] = str_from_format(arena, "%.*s[%u]",
+                                                     str_expand(fp->name), j);
+            }
+        }
+    }
+    return t;
+}
+
+string mq_qubit_name(MQ_QubitNameTable *t, u32 qubit_id) {
+    if (!t || qubit_id >= t->count) return (string){0};
+    return t->names[qubit_id];
+}
+
+
+// ============================================================
+// Testing
+// ============================================================
 
 #include <stdio.h>
 

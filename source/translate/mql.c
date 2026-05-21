@@ -579,7 +579,7 @@ const char *mql_token_kind_str(MQL_TokenKind kind)
 
 
 // --------------------------------------------------------
-// Parser internals
+// internals
 // --------------------------------------------------------
 
 static void p_error(MQL_Parser *p, MQL_Token t, const char *msg) {
@@ -934,29 +934,98 @@ static MQ_Expr *parse_expr(MQL_Parser *p) {
 }
 
 // --------------------------------------------------------
+// Scope table helpers
+// --------------------------------------------------------
+
+static void scope_clear(MQL_Parser *p) {
+    p->scope_count = 0;
+}
+
+static void scope_add(MQL_Parser *p, string name, MQL_SymKind kind,
+                      u32 base_id, u32 size) {
+    if (p->scope_count >= MQL_SCOPE_MAX) {
+        fprintf(stderr, "mql: scope table overflow\n");
+        return;
+    }
+    MQL_Symbol *s = &p->scope[p->scope_count++];
+    s->name    = name;
+    s->kind    = kind;
+    s->base_id = base_id;
+    s->size    = size;
+}
+
+static MQL_Symbol *scope_find(MQL_Parser *p, string name) {
+    for (u32 i = 0; i < p->scope_count; i++)
+        if (str_eq(p->scope[i].name, name))
+        return &p->scope[i];
+    return 0;
+}
+
+
+// --------------------------------------------------------
 // Qubit argument  (e.g. q[0] or q)
 // Returns an MQ_Expr_QubitRef with the flat id looked up from the name,
 // or MQ_Expr_RegIndex if indexed.
 // --------------------------------------------------------
 
-// Parse a single qubit argument and return the flat qubit id.
-// For bare names we return base_id; for name[i] we return base_id + literal i.
-// When index is non-literal we fall back to base_id (parser limitation noted).
+
 static u32 parse_qubit_arg_id(MQL_Parser *p) {
     MQL_Token name_tok = p_expect(p, MQL_Tok_Ident);
-    (void)name_tok;
-    // Without a symbol table we just hand out ids sequentially.
-    // A full implementation would look up name_tok in the circuit scope.
-    // We return a sentinel; the caller patches via the register table.
-    u32 id = p->next_qubit_id++;
+    string    name     = tok_str(name_tok);
+    u32       index    = 0;
+    
     if (p_peek_nc(p).kind == MQL_Tok_LBracket) {
         p_advance(p);
-        // consume the index expression but ignore its value for now
-        parse_expr(p);
+        MQL_Token idx_tok = p_expect(p, MQL_Tok_IntLit);
+        index = (u32)strtol((char*)idx_tok.lexeme.str, 0, 10);
         p_expect(p, MQL_Tok_RBracket);
     }
-    return id;
+    
+    MQL_Symbol *sym = scope_find(p, name);
+    if (!sym) {
+        p_error(p, name_tok, "unknown qubit name");
+        return 0;
+    }
+    if (sym->kind != MQL_Sym_Qubit) {
+        p_error(p, name_tok, "expected qubit, got classical register");
+        return 0;
+    }
+    if (index >= sym->size) {
+        p_error(p, name_tok, "qubit index out of range");
+        return 0;
+    }
+    return sym->base_id + index;
 }
+
+// Parse a classical bit argument and return the flat bit id.
+static u32 parse_cbit_arg_id(MQL_Parser *p) {
+    MQL_Token name_tok = p_expect(p, MQL_Tok_Ident);
+    string    name     = tok_str(name_tok);
+    u32       index    = 0;
+    
+    if (p_peek_nc(p).kind == MQL_Tok_LBracket) {
+        p_advance(p);
+        MQL_Token idx_tok = p_expect(p, MQL_Tok_IntLit);
+        index = (u32)strtol((char*)idx_tok.lexeme.str, 0, 10);
+        p_expect(p, MQL_Tok_RBracket);
+    }
+    
+    MQL_Symbol *sym = scope_find(p, name);
+    if (!sym) {
+        p_error(p, name_tok, "unknown bit name");
+        return 0;
+    }
+    if (sym->kind != MQL_Sym_Bit) {
+        p_error(p, name_tok, "expected classical bit, got qubit register");
+        return 0;
+    }
+    if (index >= sym->size) {
+        p_error(p, name_tok, "bit index out of range");
+        return 0;
+    }
+    return sym->base_id + index;
+}
+
 
 // --------------------------------------------------------
 // Gate instruction parsing
@@ -1318,15 +1387,7 @@ static MQ_Stmt *parse_stmt(MQL_Parser *p) {
         u32 src_q = parse_qubit_arg_id(p);
         MQ_Instruction instr;
         if (p_eat(p, MQL_Tok_Arrow)) {
-            // measure q -> c[n]
-            MQL_Token reg_name = p_expect(p, MQL_Tok_Ident);
-            (void)reg_name;
-            u32 bit_id = p->next_cbit_id++;
-            if (p_eat(p, MQL_Tok_LBracket)) {
-                MQL_Token idx = p_expect(p, MQL_Tok_IntLit);
-                bit_id = (u32)strtol((char*)idx.lexeme.str, 0, 10);
-                p_expect(p, MQL_Tok_RBracket);
-            }
+            u32 bit_id = parse_cbit_arg_id(p);
             instr = mq_instr_measure(src_q, bit_id);
         } else {
             instr = mq_instr_measure_discard(src_q);
@@ -1447,6 +1508,7 @@ static MQ_Stmt *parse_stmt(MQL_Parser *p) {
     return 0;
 }
 
+
 // --------------------------------------------------------
 // Formal parameter list  (for gate/operation defs)
 // --------------------------------------------------------
@@ -1485,6 +1547,31 @@ static void parse_formal_list(MQL_Parser *p,
 // Gate definition
 // --------------------------------------------------------
 
+static void scope_add_formal_params(MQL_Parser *p,
+                                    MQ_FormalParam *params, u32 count) {
+    u32 next_q = 0;
+    u32 next_c = 0;
+    for (u32 i = 0; i < count; i++) {
+        MQ_Type *ty = params[i].type;
+        if (!ty) continue;
+        if (ty->kind == MQ_Type_Qubit) {
+            scope_add(p, params[i].name, MQL_Sym_Qubit, next_q, 1);
+            next_q++;
+        } else if (ty->kind == MQ_Type_QubitReg) {
+            u32 w = ty->width ? ty->width : 1;
+            scope_add(p, params[i].name, MQL_Sym_Qubit, next_q, w);
+            next_q += w;
+        } else if (ty->kind == MQ_Type_Bit) {
+            scope_add(p, params[i].name, MQL_Sym_Bit, next_c, 1);
+            next_c++;
+        } else if (ty->kind == MQ_Type_BitReg) {
+            u32 w = ty->width ? ty->width : 1;
+            scope_add(p, params[i].name, MQL_Sym_Bit, next_c, w);
+            next_c += w;
+        }
+    }
+}
+
 static MQ_Routine *parse_gate_def(MQL_Parser *p) {
     p_expect(p, MQL_Tok_Gate);
     MQL_Token name = p_expect(p, MQL_Tok_Ident);
@@ -1493,14 +1580,18 @@ static MQ_Routine *parse_gate_def(MQL_Parser *p) {
     u32 param_count = 0;
     parse_formal_list(p, &params, &param_count);
     p_expect(p, MQL_Tok_RParen);
+    scope_clear(p);
+    scope_add_formal_params(p, params, param_count);
     MQ_Stmt *body = parse_block(p);
     return mq_routine(p->arena, tok_str(name), MQ_Routine_Gate,
                       params, param_count, 0, body);
 }
 
+
 // --------------------------------------------------------
 // Operation definition
 // --------------------------------------------------------
+
 
 static MQ_Routine *parse_operation_def(MQL_Parser *p) {
     p_expect(p, MQL_Tok_Operation);
@@ -1512,10 +1603,13 @@ static MQ_Routine *parse_operation_def(MQL_Parser *p) {
     p_expect(p, MQL_Tok_RParen);
     MQ_Type *ret = 0;
     if (p_eat(p, MQL_Tok_Arrow)) ret = parse_type(p);
+    scope_clear(p);
+    scope_add_formal_params(p, params, param_count);
     MQ_Stmt *body = parse_block(p);
     return mq_routine(p->arena, tok_str(name), MQ_Routine_Operation,
                       params, param_count, ret, body);
 }
+
 
 // --------------------------------------------------------
 // Circuit definition
@@ -1541,6 +1635,9 @@ static MQ_Circuit *parse_circuit_def(MQL_Parser *p) {
     }
     
     p_expect(p, MQL_Tok_LBrace);
+    
+    // Clear scope for this circuit
+    scope_clear(p);
     
     // --- Declarations section ---
     typedef struct RegNode { MQ_Register r; struct RegNode *next; } RegNode;
@@ -1575,6 +1672,7 @@ static MQ_Circuit *parse_circuit_def(MQL_Parser *p) {
                 meta[i].register_index = i;
             }
             MQ_Register r = mq_register_quantum(tok_str(rname), size, total_qubits, meta);
+            scope_add(p, tok_str(rname), MQL_Sym_Qubit, total_qubits, size);
             total_qubits += size;
             
             RegNode *n = arena_alloc_zero(p->arena, sizeof(RegNode));
@@ -1596,6 +1694,7 @@ static MQ_Circuit *parse_circuit_def(MQL_Parser *p) {
             p_expect(p, MQL_Tok_Semicolon);
             
             MQ_Register r = mq_register_classical(tok_str(rname), size, total_cbits);
+            scope_add(p, tok_str(rname), MQL_Sym_Bit, total_cbits, size);
             total_cbits += size;
             
             RegNode *n = arena_alloc_zero(p->arena, sizeof(RegNode));
@@ -1675,9 +1774,7 @@ static MQ_Circuit *parse_circuit_def(MQL_Parser *p) {
 
 void mql_parser_init(MQL_Parser *p, M_Arena *arena, string src) {
     memset(p, 0, sizeof(*p));
-    p->arena        = arena;
-    p->next_qubit_id = 0;
-    p->next_cbit_id  = 0;
+    p->arena = arena;
     mql_lexer_init(&p->lex, src);
 }
 
@@ -1712,4 +1809,542 @@ MQ_Program *mql_parse_program(MQL_Parser *p) {
     }
     
     return p->had_error ? 0 : prog;
+}
+
+
+// ============================================================
+// Emitter
+// ============================================================
+
+
+typedef struct EmitCtx {
+    FILE               *f;
+    M_Arena            *arena;
+    int                 indent;
+    MQ_QubitNameTable   qnames;
+} EmitCtx;
+
+static void ec_indent(EmitCtx *ec) {
+    for (int i = 0; i < ec->indent; i++) fprintf(ec->f, "    ");
+}
+
+static void ec_str(EmitCtx *ec, string s) {
+    if (!str_is_null(s)) fprintf(ec->f, "%.*s", str_expand(s));
+}
+
+static void emit_type(EmitCtx *ec, MQ_Type *t) {
+    if (!t) { fprintf(ec->f, "void"); return; }
+    switch (t->kind) {
+        case MQ_Type_Void:     fprintf(ec->f, "void");           break;
+        case MQ_Type_Bool:     fprintf(ec->f, "bool");           break;
+        case MQ_Type_Float:    fprintf(ec->f, "float");          break;
+        case MQ_Type_Angle:    fprintf(ec->f, "angle");          break;
+        case MQ_Type_Bit:      fprintf(ec->f, "bit");            break;
+        case MQ_Type_Qubit:    fprintf(ec->f, "qubit");          break;
+        case MQ_Type_Int:
+        if (t->width && t->width != 64) fprintf(ec->f, "int<%u>", t->width);
+        else                            fprintf(ec->f, "int");
+        break;
+        case MQ_Type_BitReg:   fprintf(ec->f, "bit[%u]",   t->width); break;
+        case MQ_Type_QubitReg: fprintf(ec->f, "qubit[%u]", t->width); break;
+        case MQ_Type_Array:
+        emit_type(ec, t->element_type);
+        fprintf(ec->f, "[%u]", t->width);
+        break;
+    }
+}
+
+static void emit_expr(EmitCtx *ec, MQ_Expr *e);
+
+static const char *binop_sym_mql[] = {
+    "+", "-", "*", "/", "%", "**",
+    "&", "|", "^", "<<", ">>",
+    "==", "!=", "<", "<=", ">", ">=",
+    "&&", "||"
+};
+
+static const char *unop_fn_mql[] = {
+    0, 0, 0,   // Neg Not BitNot handled inline
+    "sin", "cos", "tan", "asin", "acos", "atan",
+    "sqrt", "exp", "log", "abs"
+};
+
+static void emit_expr(EmitCtx *ec, MQ_Expr *e) {
+    if (!e) { fprintf(ec->f, "0"); return; }
+    
+    switch (e->kind) {
+        case MQ_Expr_BoolLit:
+        fprintf(ec->f, "%s", e->lit.bool_val ? "true" : "false");
+        break;
+        case MQ_Expr_IntLit:
+        fprintf(ec->f, "%lld", (long long)e->lit.int_val);
+        break;
+        case MQ_Expr_FloatLit:
+        // Use enough precision that parsing back gives the same value
+        fprintf(ec->f, "%.17g", e->lit.float_val);
+        break;
+        case MQ_Expr_Symbol:
+        case MQ_Expr_Var:
+        ec_str(ec, e->name);
+        break;
+        case MQ_Expr_QubitRef: {
+            string n = mq_qubit_name(&ec->qnames, e->qubit_id);
+            if (!str_is_null(n)) ec_str(ec, n);
+            else                 fprintf(ec->f, "q[%u]", e->qubit_id);
+            break;
+        }
+        case MQ_Expr_RegIndex:
+        ec_str(ec, e->reg.name);
+        fprintf(ec->f, "[");
+        emit_expr(ec, e->reg.index_expr);
+        fprintf(ec->f, "]");
+        break;
+        case MQ_Expr_BinOp:
+        fprintf(ec->f, "(");
+        emit_expr(ec, e->bin.lhs);
+        fprintf(ec->f, " %s ", binop_sym_mql[e->bin.op]);
+        emit_expr(ec, e->bin.rhs);
+        fprintf(ec->f, ")");
+        break;
+        case MQ_Expr_UnOp:
+        if (e->un.op == MQ_UnOp_Neg) {
+            fprintf(ec->f, "-("); emit_expr(ec, e->un.operand); fprintf(ec->f, ")");
+        } else if (e->un.op == MQ_UnOp_Not) {
+            fprintf(ec->f, "!("); emit_expr(ec, e->un.operand); fprintf(ec->f, ")");
+        } else if (e->un.op == MQ_UnOp_BitNot) {
+            fprintf(ec->f, "~("); emit_expr(ec, e->un.operand); fprintf(ec->f, ")");
+        } else {
+            fprintf(ec->f, "%s(", unop_fn_mql[e->un.op]);
+            emit_expr(ec, e->un.operand);
+            fprintf(ec->f, ")");
+        }
+        break;
+        case MQ_Expr_Call:
+        case MQ_Expr_Array:
+        if (!str_is_null(e->call.name)) ec_str(ec, e->call.name);
+        else                            fprintf(ec->f, "[");
+        if (e->kind == MQ_Expr_Call) fprintf(ec->f, "(");
+        for (u32 i = 0; i < e->call.arg_count; i++) {
+            if (i) fprintf(ec->f, ", ");
+            emit_expr(ec, e->call.args[i]);
+        }
+        if (e->kind == MQ_Expr_Call)  fprintf(ec->f, ")");
+        else                          fprintf(ec->f, "]");
+        break;
+        case MQ_Expr_BitRead:
+        ec_str(ec, e->bit.reg_name);
+        fprintf(ec->f, "[%u]", e->bit.index);
+        break;
+    }
+}
+
+static void emit_qubit(EmitCtx *ec, u32 qubit_id) {
+    string n = mq_qubit_name(&ec->qnames, qubit_id);
+    if (!str_is_null(n)) ec_str(ec, n);
+    else                 fprintf(ec->f, "q[%u]", qubit_id);
+}
+
+static const char *gate_name_mql[] = {
+    "I", "H", "X", "Y", "Z", "S", "Sdg", "T", "Tdg",
+    "P", "RX", "RY", "RZ", "U",
+    "SWAP", "ISWAP", "RZZ", "RXX", "RYY",
+    "CCX", "CSWAP",
+    0, 0   // Custom and Unitary handled separately
+};
+
+static void emit_instr(EmitCtx *ec, MQ_Instruction *instr) {
+    ec_indent(ec);
+    
+    switch (instr->type) {
+        case MQ_Instr_Gate: {
+            // Control prefixes
+            for (u8 i = 0; i < instr->gate.control_count; i++) {
+                fprintf(ec->f, instr->gate.control_states[i] ? "ctrl" : "ctrl0");
+                fprintf(ec->f, "[");
+                emit_qubit(ec, instr->gate.controls[i]);
+                fprintf(ec->f, "] ");
+            }
+            
+            // Gate name
+            if (instr->gate.gate == MQ_Gate_Custom) {
+                ec_str(ec, instr->gate.custom_name);
+            } else if (instr->gate.gate == MQ_Gate_Unitary) {
+                // Unitary matrices have no source representation; emit as a comment
+                // and fall back to a custom name placeholder.
+                fprintf(ec->f, "unitary_gate /* unitary matrix cannot be round-tripped */");
+            } else {
+                fprintf(ec->f, "%s", gate_name_mql[instr->gate.gate]);
+            }
+            
+            // Parameters
+            if (instr->gate.param_count > 0) {
+                fprintf(ec->f, "(");
+                for (u8 i = 0; i < instr->gate.param_count; i++) {
+                    if (i) fprintf(ec->f, ", ");
+                    if (instr->gate.params_symbolic)
+                        emit_expr(ec, instr->gate.param_exprs[i]);
+                    else
+                        fprintf(ec->f, "%.17g", instr->gate.params[i]);
+                }
+                fprintf(ec->f, ")");
+            }
+            
+            // Qubit arguments
+            for (u8 i = 0; i < instr->qubit_count; i++) {
+                fprintf(ec->f, " ");
+                emit_qubit(ec, instr->qubits[i]);
+            }
+            
+            // Hardware classical conditioning suffix
+            if (instr->gate.has_classical_cond) {
+                fprintf(ec->f, " if c[%u] == %u",
+                        instr->gate.classical_bit,
+                        instr->gate.classical_val);
+            }
+            
+            fprintf(ec->f, ";\n");
+            break;
+        }
+        
+        case MQ_Instr_Measure:
+        fprintf(ec->f, "measure ");
+        emit_qubit(ec, instr->qubits[0]);
+        if (instr->measure.has_target)
+            fprintf(ec->f, " -> c[%u]", instr->measure.clbit);
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Instr_Reset:
+        fprintf(ec->f, "reset ");
+        emit_qubit(ec, instr->qubits[0]);
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Instr_Barrier:
+        fprintf(ec->f, "barrier");
+        if (instr->qubit_count == 0) {
+            fprintf(ec->f, " *");
+        } else {
+            for (u8 i = 0; i < instr->qubit_count; i++) {
+                fprintf(ec->f, i ? ", " : " ");
+                emit_qubit(ec, instr->qubits[i]);
+            }
+        }
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Instr_Delay: {
+            static const char *unit_str[] = { "dt", "ns", "us", "ms", "s" };
+            fprintf(ec->f, "delay %.17g%s",
+                    instr->delay.duration, unit_str[instr->delay.unit]);
+            for (u8 i = 0; i < instr->qubit_count; i++) {
+                fprintf(ec->f, i ? ", " : " ");
+                emit_qubit(ec, instr->qubits[i]);
+            }
+            fprintf(ec->f, ";\n");
+            break;
+        }
+    }
+}
+
+static void emit_stmt(EmitCtx *ec, MQ_Stmt *s);
+
+static void emit_block_body(EmitCtx *ec, MQ_Stmt *s) {
+    // s is expected to be a MQ_Stmt_Block; emit its children indented
+    if (!s) return;
+    if (s->kind == MQ_Stmt_Block) {
+        for (u32 i = 0; i < s->block.count; i++)
+            emit_stmt(ec, s->block.stmts[i]);
+    } else {
+        emit_stmt(ec, s);
+    }
+}
+
+static void emit_block(EmitCtx *ec, MQ_Stmt *s) {
+    fprintf(ec->f, " {\n");
+    ec->indent++;
+    emit_block_body(ec, s);
+    ec->indent--;
+    ec_indent(ec);
+    fprintf(ec->f, "}");
+}
+
+static void emit_stmt(EmitCtx *ec, MQ_Stmt *s) {
+    if (!s) return;
+    
+    switch (s->kind) {
+        case MQ_Stmt_Block:
+        for (u32 i = 0; i < s->block.count; i++)
+            emit_stmt(ec, s->block.stmts[i]);
+        break;
+        
+        case MQ_Stmt_Instr:
+        emit_instr(ec, &s->instr);
+        break;
+        
+        case MQ_Stmt_Adjoint:
+        ec_indent(ec);
+        fprintf(ec->f, "adjoint");
+        emit_block(ec, s->adjoint_body);
+        fprintf(ec->f, "\n");
+        break;
+        
+        case MQ_Stmt_DeclQubit:
+        // Inside a circuit body, qubit decls were already emitted in the
+        // header section.  Inside an operation body they may appear mid-scope.
+        ec_indent(ec);
+        fprintf(ec->f, "qubit ");
+        ec_str(ec, s->decl_qubit.name);
+        if (s->decl_qubit.count > 1) fprintf(ec->f, "[%u]", s->decl_qubit.count);
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Stmt_DeclClassical:
+        ec_indent(ec);
+        fprintf(ec->f, "let ");
+        ec_str(ec, s->decl_classical.name);
+        fprintf(ec->f, " : ");
+        emit_type(ec, s->decl_classical.type);
+        if (s->decl_classical.init) {
+            fprintf(ec->f, " = ");
+            emit_expr(ec, s->decl_classical.init);
+        }
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Stmt_DeclParam:
+        ec_indent(ec);
+        fprintf(ec->f, "param ");
+        ec_str(ec, s->decl_param.name);
+        if (s->decl_param.default_val) {
+            fprintf(ec->f, " = ");
+            emit_expr(ec, s->decl_param.default_val);
+        }
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Stmt_Set: {
+            ec_indent(ec);
+            fprintf(ec->f, "set ");
+            emit_expr(ec, s->set.lhs);
+            if (s->set.augmented) {
+                fprintf(ec->f, " %s= ", binop_sym_mql[s->set.aug_op]);
+            } else {
+                fprintf(ec->f, " = ");
+            }
+            emit_expr(ec, s->set.rhs);
+            fprintf(ec->f, ";\n");
+            break;
+        }
+        
+        case MQ_Stmt_If:
+        for (u32 i = 0; i < s->if_stmt.count; i++) {
+            MQ_IfBranch *br = &s->if_stmt.branches[i];
+            ec_indent(ec);
+            if (!br->cond) {
+                fprintf(ec->f, "else");
+            } else {
+                fprintf(ec->f, i == 0 ? "if " : "elif ");
+                emit_expr(ec, br->cond);
+            }
+            emit_block(ec, br->body);
+            fprintf(ec->f, "\n");
+        }
+        break;
+        
+        case MQ_Stmt_For:
+        ec_indent(ec);
+        fprintf(ec->f, "for ");
+        ec_str(ec, s->for_loop.var_name);
+        if (s->for_loop.var_type) {
+            fprintf(ec->f, " : ");
+            emit_type(ec, s->for_loop.var_type);
+        }
+        fprintf(ec->f, " in ");
+        emit_expr(ec, s->for_loop.iterable);
+        emit_block(ec, s->for_loop.body);
+        fprintf(ec->f, "\n");
+        break;
+        
+        case MQ_Stmt_While:
+        ec_indent(ec);
+        fprintf(ec->f, "while ");
+        emit_expr(ec, s->while_loop.cond);
+        emit_block(ec, s->while_loop.body);
+        fprintf(ec->f, "\n");
+        break;
+        
+        case MQ_Stmt_Break:
+        ec_indent(ec); fprintf(ec->f, "break;\n");
+        break;
+        
+        case MQ_Stmt_Continue:
+        ec_indent(ec); fprintf(ec->f, "continue;\n");
+        break;
+        
+        case MQ_Stmt_Return:
+        ec_indent(ec);
+        fprintf(ec->f, "return");
+        if (s->return_val) { fprintf(ec->f, " "); emit_expr(ec, s->return_val); }
+        fprintf(ec->f, ";\n");
+        break;
+        
+        case MQ_Stmt_Call:
+        ec_indent(ec);
+        ec_str(ec, s->call.callee);
+        fprintf(ec->f, "(");
+        for (u32 i = 0; i < s->call.arg_count; i++) {
+            if (i) fprintf(ec->f, ", ");
+            emit_expr(ec, s->call.args[i]);
+        }
+        fprintf(ec->f, ");\n");
+        break;
+        
+        case MQ_Stmt_Comment:
+        ec_indent(ec);
+        fprintf(ec->f, "// ");
+        ec_str(ec, s->comment_text);
+        fprintf(ec->f, "\n");
+        break;
+        
+        case MQ_Stmt_Pragma:
+        ec_indent(ec);
+        fprintf(ec->f, "#pragma ");
+        ec_str(ec, s->pragma.key);
+        fprintf(ec->f, " \"");
+        ec_str(ec, s->pragma.value);
+        fprintf(ec->f, "\"\n");
+        break;
+    }
+}
+
+static void emit_routine(EmitCtx *ec, MQ_Routine *r) {
+    if (r->is_intrinsic) {
+        // Intrinsics have no source body; emit a comment marking them.
+        fprintf(ec->f, "// intrinsic %s -> ",
+                r->kind == MQ_Routine_Gate ? "gate" : "operation");
+        ec_str(ec, r->name);
+        fprintf(ec->f, " (%.*s)\n\n", str_expand(r->intrinsic_name));
+        return;
+    }
+    
+    if (!str_is_null(r->doc_comment)) {
+        fprintf(ec->f, "// ");
+        ec_str(ec, r->doc_comment);
+        fprintf(ec->f, "\n");
+    }
+    
+    fprintf(ec->f, "%s ", r->kind == MQ_Routine_Gate ? "gate" : "operation");
+    ec_str(ec, r->name);
+    fprintf(ec->f, "(");
+    
+    for (u32 i = 0; i < r->param_count; i++) {
+        if (i) fprintf(ec->f, ", ");
+        ec_str(ec, r->params[i].name);
+        fprintf(ec->f, " : ");
+        emit_type(ec, r->params[i].type);
+        if (r->params[i].default_val) {
+            fprintf(ec->f, " = ");
+            emit_expr(ec, r->params[i].default_val);
+        }
+    }
+    fprintf(ec->f, ")");
+    
+    if (r->kind == MQ_Routine_Operation && r->return_type &&
+        r->return_type->kind != MQ_Type_Void) {
+        fprintf(ec->f, " -> ");
+        emit_type(ec, r->return_type);
+    }
+    
+    // Build qubit name table from formal params for use inside the body
+    ec->qnames = mq_qubit_names_from_routine(ec->arena, r);
+    
+    fprintf(ec->f, " {\n");
+    ec->indent++;
+    emit_block_body(ec, r->body);
+    ec->indent--;
+    fprintf(ec->f, "}\n\n");
+}
+
+static void emit_circuit(EmitCtx *ec, MQ_Circuit *c) {
+    fprintf(ec->f, "circuit ");
+    ec_str(ec, c->name);
+    
+    // Circuit-level inputs as formal params
+    if (c->param_count > 0) {
+        fprintf(ec->f, "(");
+        for (u32 i = 0; i < c->param_count; i++) {
+            if (i) fprintf(ec->f, ", ");
+            ec_str(ec, c->param_names[i]);
+            fprintf(ec->f, " : angle");
+            if (c->param_defaults[i]) {
+                fprintf(ec->f, " = ");
+                emit_expr(ec, c->param_defaults[i]);
+            }
+        }
+        fprintf(ec->f, ")");
+    }
+    
+    fprintf(ec->f, " {\n");
+    ec->indent++;
+    
+    // Qubit registers
+    for (u32 i = 0; i < c->register_count; i++) {
+        MQ_Register *r = &c->registers[i];
+        ec_indent(ec);
+        if (r->kind == MQ_Reg_Quantum) {
+            fprintf(ec->f, "qubit ");
+            ec_str(ec, r->name);
+            if (r->size > 1) fprintf(ec->f, "[%u]", r->size);
+            fprintf(ec->f, ";\n");
+        } else {
+            fprintf(ec->f, "bit ");
+            ec_str(ec, r->name);
+            if (r->size > 1) fprintf(ec->f, "[%u]", r->size);
+            fprintf(ec->f, ";\n");
+        }
+    }
+    
+    // Unbound symbolic params declared inline (those without default)
+    for (u32 i = 0; i < c->param_count; i++) {
+        if (!c->param_defaults[i]) {
+            ec_indent(ec);
+            fprintf(ec->f, "param ");
+            ec_str(ec, c->param_names[i]);
+            fprintf(ec->f, ";\n");
+        }
+    }
+    
+    if (c->register_count > 0 || c->param_count > 0)
+        fprintf(ec->f, "\n");
+    
+    // Build qubit name table from register metadata
+    ec->qnames = mq_qubit_names_from_circuit(ec->arena, c);
+    
+    // Body statements
+    emit_block_body(ec, c->body);
+    
+    ec->indent--;
+    fprintf(ec->f, "}\n\n");
+}
+
+void mql_emit(FILE *f, MQ_Program *prog) {
+    M_Arena scratch;
+    arena_init(&scratch);
+    
+    if (!prog) return;
+    
+    EmitCtx ec = {0};
+    ec.f      = f;
+    ec.arena  = &scratch;
+    ec.indent = 0;
+    
+    // Routines first so circuits can call them
+    for (u32 i = 0; i < prog->routine_count; i++)
+        emit_routine(&ec, prog->routines[i]);
+    
+    for (u32 i = 0; i < prog->circuit_count; i++)
+        emit_circuit(&ec, prog->circuits[i]);
+    
+    arena_free(&scratch);
 }

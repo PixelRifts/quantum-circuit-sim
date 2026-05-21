@@ -598,6 +598,7 @@ typedef struct MQ_FormalParam {
     string   name;
     MQ_Type *type;
     MQ_Expr *default_val;
+    u32      base_id;
 } MQ_FormalParam;
 
 struct MQ_Routine {
@@ -618,6 +619,27 @@ struct MQ_Routine {
     string doc_comment;
     u32    source_line;
 };
+
+
+// --- Qubit name table ---
+
+// Maps a flat qubit_id to a human-readable source name ("reg[i]" or param name).
+// Used by emitters that need to reconstruct source-level qubit references.
+typedef struct MQ_QubitNameTable {
+    string *names;
+    u32     count;
+} MQ_QubitNameTable;
+
+// Build a name table from a circuit's register metadata.
+// Qubit i of register "q" of size n -> "q[i]"; size-1 registers -> "q".
+MQ_QubitNameTable mq_qubit_names_from_circuit(M_Arena *arena, MQ_Circuit *circuit);
+
+// Build a name table from a routine's formal parameters.
+// Each MQ_Type_Qubit param gets one id; MQ_Type_QubitReg params get width ids as "name[i]".
+MQ_QubitNameTable mq_qubit_names_from_routine(M_Arena *arena, MQ_Routine *routine);
+
+// Look up the name for qubit_id; returns {0} if out of range.
+string mq_qubit_name(MQ_QubitNameTable *t, u32 qubit_id);
 
 
 /* ======================================================================
@@ -809,8 +831,6 @@ u32 mq_circuit_add_param(M_Arena *arena, MQ_Circuit *circuit, string name, MQ_Ex
 MQ_Program *mq_program(M_Arena *arena, string name, MQ_SourceLang lang);
 void        mq_program_add_routine(M_Arena *arena, MQ_Program *prog, MQ_Routine *routine);
 void        mq_program_add_circuit(M_Arena *arena, MQ_Program *prog, MQ_Circuit *circuit);
-
-
 
 
 // Random stuff
