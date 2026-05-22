@@ -1,8 +1,0 @@
-circuit main {
-    qubit q[2];
-    bit c[2];
-
-    H q[0];
-    ctrl[q[0]] X q[1];
-}
-
