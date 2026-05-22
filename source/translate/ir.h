@@ -287,6 +287,7 @@ typedef enum MQ_GateType {
     MQ_Gate_U,
     
     // Two-qubit
+    MQ_Gate_CX,
     MQ_Gate_SWAP,
     MQ_Gate_ISWAP,
     MQ_Gate_RZZ,
