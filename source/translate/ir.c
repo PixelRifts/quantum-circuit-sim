@@ -678,6 +678,17 @@ static void wr_expr(FILE *f, MQ_Expr *e) {
         
         case MQ_Expr_Array:
         case MQ_Expr_Call: {
+            /* range(start, end) → print as start..end */
+            if (e->call.name.size == 5 && e->call.name.str &&
+                strncmp((char *)e->call.name.str, "range", 5) == 0 &&
+                e->call.arg_count == 2)
+            {
+                wr_expr(f, e->call.args[0]);
+                fprintf(f, "..");
+                wr_expr(f, e->call.args[1]);
+                break;
+            }
+            
             if (!str_is_null(e->call.name)) wr_str(f, e->call.name);
             else                            fprintf(f, "array");
             fprintf(f, "(");
@@ -687,7 +698,6 @@ static void wr_expr(FILE *f, MQ_Expr *e) {
             }
             fprintf(f, ")");
         } break;
-        
         case MQ_Expr_BitRead: {
             wr_str(f, e->bit.reg_name);
             fprintf(f, "[%u]", e->bit.index);

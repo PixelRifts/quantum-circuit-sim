@@ -455,16 +455,15 @@ static MQ_Expr *lower_expr(QS_Ctx *ctx, TSNode node)
     }
 
     if (strcmp(type, "range_expression") == 0) {
-        /* 1..shots  or  1..2..shots
-         * Grab first and last named children as start/end.
-         * Store as BinOp_Shl sentinel so emitter prints "lhs..rhs". */
-        u32 nc = ts_node_named_child_count(node);
-        TSNode start_node = ts_node_named_child(node, 0);
-        TSNode end_node   = ts_node_named_child(node, nc - 1);
-        MQ_Expr *start_e  = lower_expr(ctx, start_node);
-        MQ_Expr *end_e    = lower_expr(ctx, end_node);
-        return mq_expr_binop(ctx->arena, MQ_BinOp_Shl, start_e, end_e);
-    }
+    u32 nc = ts_node_named_child_count(node);
+    TSNode start_node = ts_node_named_child(node, 0);
+    TSNode end_node   = ts_node_named_child(node, nc - 1);
+    MQ_Expr *start_e  = lower_expr(ctx, start_node);
+    MQ_Expr *end_e    = lower_expr(ctx, end_node);
+    /* Use range(start, end) call instead of BinOp_Shl sentinel */
+    MQ_Expr *range_args[2] = { start_e, end_e };
+    return mq_expr_call(ctx->arena, str_lit("range"), range_args, 2);
+}
 
     if (strcmp(type, "binary_expression") == 0) {
         TSNode lhs_node = ts_node_named_child(node, 0);
@@ -494,8 +493,7 @@ static MQ_Expr *lower_expr(QS_Ctx *ctx, TSNode node)
             else if (strcmp(t, "||")  == 0) op = MQ_BinOp_LogOr;
             else if (strcmp(t, "&&&") == 0) op = MQ_BinOp_And;
             else if (strcmp(t, "|||") == 0) op = MQ_BinOp_Or;
-            /* In the binary_expression operator loop, ADD: */
-else if (strcmp(t, "..") == 0) op = MQ_BinOp_Shl;  /* range sentinel */
+           
         }
 
         MQ_Expr *lhs = lower_expr(ctx, lhs_node);
@@ -596,21 +594,153 @@ else if (strcmp(t, "..") == 0) op = MQ_BinOp_Shl;  /* range sentinel */
             return NULL;
 
         string callee_name = node_text(ctx->arena, callee_node, ctx->src);
-        if (callee_name.str && (strcmp((char *)callee_name.str, "ApplyToEach") == 0 ||
-                                strcmp((char *)callee_name.str, "ApplyToEachA") == 0 ||
-                                strcmp((char *)callee_name.str, "ApplyToEachC") == 0))
+// In lower_gate_call(), replace lines 599–613:
+
+if (callee_name.str && (strcmp((char *)callee_name.str, "ApplyToEach")  == 0 ||
+                        strcmp((char *)callee_name.str, "ApplyToEachA") == 0 ||
+                        strcmp((char *)callee_name.str, "ApplyToEachC") == 0))
+{
+    /*
+     * ApplyToEach(Gate, register)
+     *
+     * Arg 0 (node child 1): the gate name as an identifier  -- e.g. "H"
+     * Arg 1 (node child 2): the register expression         -- e.g. "qs"
+     *
+     * Lower into:
+     *   for _i in 0 .. reg_size - 1 {
+     *       Gate(reg[_i]);
+     *   }
+     *
+     * If we cannot resolve the register size statically (parameter context),
+     * we fall back to a symbolic range  0 .. Length(reg)-1  stored as a
+     * BinOp_Shl (the range sentinel already used by the range_expression
+     * lowering path) so the emitter can still round-trip it to Q#.
+     */
+
+    u32 arg_node_count = ts_node_named_child_count(call_node) - 1;
+    if (arg_node_count < 2)
+        return mq_stmt_call(ctx->arena, callee_name, NULL, 0); /* malformed, bail */
+
+    /* ── 1. Resolve the gate ── */
+    TSNode gate_node = ts_node_named_child(call_node, 1);
+    string gate_name = node_text(ctx->arena, gate_node, ctx->src);
+    MQ_GateType gate  = gate_from_name((char *)gate_name.str);
+
+    /* ── 2. Resolve the register ── */
+    TSNode reg_node  = ts_node_named_child(call_node, 2);
+    string reg_name  = node_text(ctx->arena, reg_node, ctx->src);
+
+    /* Look up register size in the context table */
+    u32 reg_size = 0;
+    u32 reg_base = 0;
+    b8  found    = false;
+    for (u32 ri = 0; ri < ctx->reg_count; ri++)
+    {
+        if (str_eq(ctx->regs[ri].name, reg_name))
         {
-            u32 n = ts_node_named_child_count(call_node);
-            u32 arg_count = n - 1;
-            MQ_Expr **args = NULL;
-            if (arg_count > 0)
-            {
-                args = (MQ_Expr **)arena_alloc(ctx->arena, sizeof(MQ_Expr *) * arg_count);
-                for (u32 i = 0; i < arg_count; i++)
-                    args[i] = lower_expr(ctx, ts_node_named_child(call_node, i + 1));
-            }
-            return mq_stmt_call(ctx->arena, callee_name, args, arg_count);
+            reg_size = ctx->regs[ri].size;
+            reg_base = ctx->regs[ri].base_id;
+            found    = true;
+            break;
         }
+    }
+
+    /* ── 3. Build the loop iterable  0 .. (reg_size - 1) ── */
+    MQ_Expr *range_start = mq_expr_int(ctx->arena, 0);
+    MQ_Expr *range_end;
+
+    if (found && reg_size > 0)
+    {
+        /* Static size known — emit a concrete integer range */
+        range_end = mq_expr_int(ctx->arena, (i64)(reg_size - 1));
+    }
+    else
+    {
+        /*
+         * Size not statically known (e.g. routine formal param).
+         * Emit  Length(reg) - 1  as a BinOp_Sub expression so the Q#
+         * emitter can reconstruct  0 .. Length(qs) - 1.
+         */
+        MQ_Expr *length_args[1];
+        length_args[0] = mq_expr_var(ctx->arena, reg_name);
+        MQ_Expr *len_call = mq_expr_call(ctx->arena, str_lit("Length"),
+                                          length_args, 1);
+        range_end = mq_expr_binop(ctx->arena, MQ_BinOp_Sub,
+                                   len_call, mq_expr_int(ctx->arena, 1));
+    }
+
+    /* Range stored as BinOp_Shl — matches the range_expression sentinel */
+    MQ_Expr *range = mq_expr_binop(ctx->arena, MQ_BinOp_Shl,
+                                    range_start, range_end);
+
+    /* ── 4. Build the loop body: Gate(reg[_i]) ── */
+    string loop_var = str_lit("_i");
+
+    /*
+     * If the size is statically known, unroll gate instructions directly
+     * into a flat block (reg[0], reg[1], ...) — cleaner IR for small regs.
+     * Otherwise emit a single for-loop so the emitter can round-trip.
+     */
+    MQ_Stmt *body_stmt;
+
+    if (found && reg_size > 0 && reg_size <= 16)
+    {
+        /* Unrolled block */
+        MQ_Stmt **body_stmts = (MQ_Stmt **)arena_alloc(
+            ctx->arena, sizeof(MQ_Stmt *) * reg_size);
+
+        for (u32 qi = 0; qi < reg_size; qi++)
+        {
+            u32 qubit_id = reg_base + qi;
+            MQ_Instruction instr;
+            if (gate != MQ_Gate_Custom)
+                instr = mq_instr_gate(gate, &qubit_id, 1);
+            else
+            {
+                instr = mq_instr_gate_custom(gate_name, &qubit_id, 1, NULL, 0);
+            }
+
+            /* Handle ApplyToEachA (Adjoint) */
+            MQ_Stmt *gs = mq_stmt_instr(ctx->arena, instr);
+            if (strcmp((char *)callee_name.str, "ApplyToEachA") == 0)
+                gs = mq_stmt_adjoint(ctx->arena, gs);
+            body_stmts[qi] = gs;
+        }
+        body_stmt = mq_stmt_block(ctx->arena, body_stmts, reg_size);
+    }
+    else
+    {
+        /*
+         * For large or unknown-size registers, emit a for loop with a
+         * symbolic reg[_i] qubit reference in the body.
+         * The gate instruction carries qubit_id = reg_base + 0 as a
+         * placeholder; emitters that need the loop form will use the
+         * for-stmt's var_name to reconstruct  reg[_i].
+         *
+         * Better approach for unknown size: emit mq_stmt_call with a
+         * structured tag so smart emitters can still recognise it.
+         * We use mq_stmt_for with a single-instruction body whose qubit
+         * is the symbolic base_id (emitter must map via the loop var).
+         */
+        u32 placeholder_qubit = reg_base; /* will be overridden by loop var */
+        MQ_Instruction instr;
+        if (gate != MQ_Gate_Custom)
+            instr = mq_instr_gate(gate, &placeholder_qubit, 1);
+        else
+            instr = mq_instr_gate_custom(gate_name, &placeholder_qubit, 1, NULL, 0);
+
+        MQ_Stmt *gate_stmt = mq_stmt_instr(ctx->arena, instr);
+        if (strcmp((char *)callee_name.str, "ApplyToEachA") == 0)
+            gate_stmt = mq_stmt_adjoint(ctx->arena, gate_stmt);
+
+        MQ_Stmt *loop_body = mq_stmt_block(ctx->arena, &gate_stmt, 1);
+        body_stmt = mq_stmt_for(ctx->arena, loop_var,
+                                 mq_type_int(ctx->arena, 64),
+                                 range, loop_body);
+    }
+
+    return body_stmt;
+}
         if (!callee_name.str)
             return NULL;
 
@@ -704,147 +834,246 @@ else if (strcmp(t, "..") == 0) op = MQ_BinOp_Shl;  /* range sentinel */
         return stmt;
     }
 
-    static MQ_Stmt *lower_call_expr(QS_Ctx * ctx, TSNode call_node)
+    static MQ_Stmt *lower_call_expr(QS_Ctx *ctx, TSNode call_node)
+{
+    TSNode callee = ts_node_named_child(call_node, 0);
+    if (node_null(callee))
+        return NULL;
+
+    /* ── Controlled / Adjoint: callee is a unary_expression ─────────────────
+     *
+     * Q# syntax:  Controlled Gate([ctrl0, ctrl1, ...], target)
+     *             Adjoint Gate(target)
+     * ──────────────────────────────────────────────────────────────────────*/
+    if (node_is(callee, "unary_expression"))
     {
-        TSNode callee = ts_node_named_child(call_node, 0);
-        if (node_null(callee))
-            return NULL;
+        b8 is_ctrl = false, is_adj = false;
 
-        /* Controlled / Adjoint: callee is a unary_expression */
-        if (node_is(callee, "unary_expression"))
+        u32 total = ts_node_child_count(callee);
+        for (u32 i = 0; i < total; i++)
         {
-            b8 is_ctrl = false, is_adj = false;
-            u32 ctrl_qubit = 0;
+            TSNode c = ts_node_child(callee, i);
+            if (ts_node_is_named(c))
+                continue;
+            string tok = node_text(ctx->arena, c, ctx->src);
+            if (!tok.str)
+                continue;
+            if (strcmp((char *)tok.str, "Controlled") == 0)
+                is_ctrl = true;
+            if (strcmp((char *)tok.str, "Adjoint") == 0)
+                is_adj = true;
+        }
 
-            u32 total = ts_node_child_count(callee);
-            for (u32 i = 0; i < total; i++)
-            {
-                TSNode c = ts_node_child(callee, i);
-                if (ts_node_is_named(c))
-                    continue;
-                string tok = node_text(ctx->arena, c, ctx->src);
-                if (!tok.str)
-                    continue;
-                if (strcmp((char *)tok.str, "Controlled") == 0)
-                    is_ctrl = true;
-                if (strcmp((char *)tok.str, "Adjoint") == 0)
-                    is_adj = true;
-            }
+        /* Collect ALL control qubits from the array_expression argument.
+         * Old code only grabbed index [0] — broke CCZ (Toffoli-phase).    */
+        u32 ctrl_qubits[MQ_MAX_CONTROLS] = {0};
+        u8  ctrl_count  = 0;
 
-            /* Find control qubit from the array_expression argument */
-            if (is_ctrl)
-            {
-                u32 n = ts_node_named_child_count(call_node);
-                for (u32 i = 1; i < n; i++)
-                {
-                    TSNode arg = ts_node_named_child(call_node, i);
-                    if (node_is(arg, "array_expression"))
-                    {
-                        ctrl_qubit = resolve_qubit_node(ctx, ts_node_named_child(arg, 0));
-                        break;
-                    }
-                }
-            }
-
-            /* Gate name is the first named child of the unary_expression */
-            TSNode gate_id = ts_node_named_child(callee, 0);
-            if (node_null(gate_id))
-                return NULL;
-
-            string gate_name = node_text(ctx->arena, gate_id, ctx->src);
-            MQ_GateType gate = gate_from_name((char *)gate_name.str);
-
-            u32 qubits[MQ_MAX_GATE_QUBITS] = {0};
-            u8 qubit_count = 0;
-            MQ_Expr *param_exprs[MQ_MAX_GATE_PARAMS] = {NULL};
-            u8 param_count = 0;
-
+        if (is_ctrl)
+        {
             u32 n = ts_node_named_child_count(call_node);
             for (u32 i = 1; i < n; i++)
             {
                 TSNode arg = ts_node_named_child(call_node, i);
-                const char *at = ts_node_type(arg);
-
-                if (strcmp(at, "array_expression") == 0)
+                if (node_is(arg, "array_expression"))
                 {
-                    /* These are control qubits — already handled above, skip */
-                    continue;
-                }
-                if (strcmp(at, "tuple_expression") == 0)
-                {
-                    u32 tn = ts_node_named_child_count(arg);
-                    for (u32 j = 0; j < tn; j++)
+                    u32 arr_len = ts_node_named_child_count(arg);
+                    for (u32 j = 0; j < arr_len && ctrl_count < MQ_MAX_CONTROLS; j++)
                     {
-                        TSNode te = ts_node_named_child(arg, j);
-                        const char *tet = ts_node_type(te);
-                        if (strcmp(tet, "index_expression") == 0 || strcmp(tet, "identifier") == 0)
-                        {
-                            if (qubit_count < MQ_MAX_GATE_QUBITS)
-                                qubits[qubit_count++] = resolve_qubit_node(ctx, te);
-                        }
-                        else
-                        {
-                            if (param_count < MQ_MAX_GATE_PARAMS)
-                                param_exprs[param_count++] = lower_expr(ctx, te);
-                        }
+                        ctrl_qubits[ctrl_count++] =
+                            resolve_qubit_node(ctx, ts_node_named_child(arg, j));
                     }
-                    continue;
+                    break;
                 }
-                if (strcmp(at, "index_expression") == 0 || strcmp(at, "identifier") == 0)
-                {
-                    if (qubit_count < MQ_MAX_GATE_QUBITS)
-                        qubits[qubit_count++] = resolve_qubit_node(ctx, arg);
-                    continue;
-                }
-                if (param_count < MQ_MAX_GATE_PARAMS)
-                    param_exprs[param_count++] = lower_expr(ctx, arg);
             }
-
-            MQ_Instruction instr;
-            if (param_count > 0)
-                instr = mq_instr_gate_sym(gate, qubits, qubit_count, param_exprs, param_count);
-            else
-                instr = mq_instr_gate(gate, qubits, qubit_count);
-
-            if (gate == MQ_Gate_Custom)
-                instr.gate.custom_name = gate_name;
-
-            TSPoint spt = ts_node_start_point(call_node);
-            instr.source_line = spt.row + 1;
-            instr.source_col = spt.column;
-
-            if (is_ctrl)
-                mq_instr_add_control(&instr, ctrl_qubit, 1);
-
-            MQ_Stmt *stmt = mq_stmt_instr(ctx->arena, instr);
-            if (is_adj)
-                stmt = mq_stmt_adjoint(ctx->arena, stmt);
-            return stmt;
         }
 
-        // AFTER:
-        /* Check if callee is a known gate; if not, emit as a routine call */
-        if (node_is(callee, "identifier"))
+        /* Gate name from first named child of the unary_expression */
+        TSNode gate_id = ts_node_named_child(callee, 0);
+        if (node_null(gate_id))
+            return NULL;
+
+        string gate_name = node_text(ctx->arena, gate_id, ctx->src);
+        MQ_GateType gate = gate_from_name((char *)gate_name.str);
+
+        u32      qubits[MQ_MAX_GATE_QUBITS] = {0};
+        u8       qubit_count = 0;
+        MQ_Expr *param_exprs[MQ_MAX_GATE_PARAMS] = {NULL};
+        u8       param_count = 0;
+
+        u32 n = ts_node_named_child_count(call_node);
+        for (u32 i = 1; i < n; i++)
         {
-            string cname = node_text(ctx->arena, callee, ctx->src);
-            if (cname.str && gate_from_name((char *)cname.str) == MQ_Gate_Custom)
+            TSNode arg = ts_node_named_child(call_node, i);
+            const char *at = ts_node_type(arg);
+
+            if (strcmp(at, "array_expression") == 0)
             {
-                /* Not a known gate — must be a user-defined operation call */
-                u32 n = ts_node_named_child_count(call_node);
-                u32 arg_count = n - 1;
-                MQ_Expr **args = NULL;
-                if (arg_count > 0)
-                {
-                    args = (MQ_Expr **)arena_alloc(ctx->arena, sizeof(MQ_Expr *) * arg_count);
-                    for (u32 i = 0; i < arg_count; i++)
-                        args[i] = lower_expr(ctx, ts_node_named_child(call_node, i + 1));
-                }
-                return mq_stmt_call(ctx->arena, cname, args, arg_count);
+                /* Control array — already collected above, skip */
+                continue;
             }
+            if (strcmp(at, "tuple_expression") == 0)
+            {
+                u32 tn = ts_node_named_child_count(arg);
+                for (u32 j = 0; j < tn; j++)
+                {
+                    TSNode te = ts_node_named_child(arg, j);
+                    const char *tet = ts_node_type(te);
+                    if (strcmp(tet, "index_expression") == 0 ||
+                        strcmp(tet, "identifier")        == 0)
+                    {
+                        if (qubit_count < MQ_MAX_GATE_QUBITS)
+                            qubits[qubit_count++] = resolve_qubit_node(ctx, te);
+                    }
+                    else
+                    {
+                        if (param_count < MQ_MAX_GATE_PARAMS)
+                            param_exprs[param_count++] = lower_expr(ctx, te);
+                    }
+                }
+                continue;
+            }
+            if (strcmp(at, "index_expression") == 0 ||
+                strcmp(at, "identifier")        == 0)
+            {
+                if (qubit_count < MQ_MAX_GATE_QUBITS)
+                    qubits[qubit_count++] = resolve_qubit_node(ctx, arg);
+                continue;
+            }
+            if (param_count < MQ_MAX_GATE_PARAMS)
+                param_exprs[param_count++] = lower_expr(ctx, arg);
         }
-        /* Plain gate call */
-        return lower_gate_call(ctx, call_node, false, 0, false);
+
+        MQ_Instruction instr;
+        if (param_count > 0)
+            instr = mq_instr_gate_sym(gate, qubits, qubit_count,
+                                      param_exprs, param_count);
+        else
+            instr = mq_instr_gate(gate, qubits, qubit_count);
+
+        if (gate == MQ_Gate_Custom)
+            instr.gate.custom_name = gate_name;
+
+        TSPoint spt = ts_node_start_point(call_node);
+        instr.source_line = spt.row + 1;
+        instr.source_col  = spt.column;
+
+        /* Apply ALL collected control qubits */
+        for (u8 ci = 0; ci < ctrl_count; ci++)
+            mq_instr_add_control(&instr, ctrl_qubits[ci], 1);
+
+        MQ_Stmt *stmt = mq_stmt_instr(ctx->arena, instr);
+        if (is_adj)
+            stmt = mq_stmt_adjoint(ctx->arena, stmt);
+        return stmt;
     }
+
+    /* ── Plain identifier callee ─────────────────────────────────────────── */
+    if (node_is(callee, "identifier"))
+    {
+        string cname = node_text(ctx->arena, callee, ctx->src);
+        if (!cname.str) return NULL;
+
+        /* ── ApplyToEach / ApplyToEachA / ApplyToEachC ──────────────────────
+         *
+         * Always lowered to a for-loop — never unrolled.
+         *
+         *   ApplyToEach(Gate, reg)
+         *   →
+         *   for _i in 0..reg_size-1 { Gate(reg[_i]); }
+         *
+         * ────────────────────────────────────────────────────────────────── */
+        b8 is_apply_each   = strcmp((char *)cname.str, "ApplyToEach")  == 0;
+        b8 is_apply_each_a = strcmp((char *)cname.str, "ApplyToEachA") == 0;
+        b8 is_apply_each_c = strcmp((char *)cname.str, "ApplyToEachC") == 0;
+
+        if (is_apply_each || is_apply_each_a || is_apply_each_c)
+        {
+            u32 total_args = ts_node_named_child_count(call_node) - 1;
+            if (total_args < 2)
+                return mq_stmt_call(ctx->arena, cname, NULL, 0);
+
+            /* 1. Gate */
+            TSNode gate_node = ts_node_named_child(call_node, 1);
+            string gate_name = node_text(ctx->arena, gate_node, ctx->src);
+            MQ_GateType gate = gate_from_name((char *)gate_name.str);
+
+            /* 2. Register */
+            TSNode reg_node = ts_node_named_child(call_node, 2);
+            string reg_name = node_text(ctx->arena, reg_node, ctx->src);
+
+            u32 reg_size = 0, reg_base = 0;
+            b8  found    = false;
+            for (u32 ri = 0; ri < ctx->reg_count; ri++)
+            {
+                if (str_eq(ctx->regs[ri].name, reg_name))
+                {
+                    reg_size = ctx->regs[ri].size;
+                    reg_base = ctx->regs[ri].base_id;
+                    found    = true;
+                    break;
+                }
+            }
+
+            /* ── 3. Build range as range(0, reg_size-1) call expr ── */
+            MQ_Expr *range_start = mq_expr_int(ctx->arena, 0);
+            MQ_Expr *range_end;
+            if (found && reg_size > 0)
+            {
+                range_end = mq_expr_int(ctx->arena, (i64)(reg_size - 1));
+            }
+            else
+            {
+                /* Symbolic: Length(reg) - 1 */
+                MQ_Expr *len_arg  = mq_expr_var(ctx->arena, reg_name);
+                MQ_Expr *len_call = mq_expr_call(ctx->arena, str_lit("Length"),
+                                                  &len_arg, 1);
+                range_end = mq_expr_binop(ctx->arena, MQ_BinOp_Sub,
+                                           len_call, mq_expr_int(ctx->arena, 1));
+            }
+            MQ_Expr *range_args[2] = { range_start, range_end };
+            MQ_Expr *range = mq_expr_call(ctx->arena, str_lit("range"), range_args, 2);
+
+            /* 4. Loop body */
+            string loop_var    = str_lit("_i");
+            u32    placeholder = reg_base;
+
+            MQ_Instruction instr = (gate != MQ_Gate_Custom)
+                ? mq_instr_gate(gate, &placeholder, 1)
+                : mq_instr_gate_custom(gate_name, &placeholder, 1, NULL, 0);
+
+            MQ_Stmt *gate_stmt = mq_stmt_instr(ctx->arena, instr);
+            if (is_apply_each_a)
+                gate_stmt = mq_stmt_adjoint(ctx->arena, gate_stmt);
+
+            MQ_Stmt *loop_body = mq_stmt_block(ctx->arena, &gate_stmt, 1);
+
+            return mq_stmt_for(ctx->arena, loop_var,
+                               mq_type_int(ctx->arena, 64),
+                               range,
+                               loop_body);
+        }
+
+        /* Not ApplyToEach and not a known gate → user-defined routine call */
+        if (gate_from_name((char *)cname.str) == MQ_Gate_Custom)
+        {
+            u32 n = ts_node_named_child_count(call_node);
+            u32 arg_count = n - 1;
+            MQ_Expr **args = NULL;
+            if (arg_count > 0)
+            {
+                args = (MQ_Expr **)arena_alloc(ctx->arena,
+                                               sizeof(MQ_Expr *) * arg_count);
+                for (u32 i = 0; i < arg_count; i++)
+                    args[i] = lower_expr(ctx, ts_node_named_child(call_node, i + 1));
+            }
+            return mq_stmt_call(ctx->arena, cname, args, arg_count);
+        }
+    }
+
+    /* Plain known-gate call */
+    return lower_gate_call(ctx, call_node, false, 0, false);
+}
 
     static MQ_Stmt *lower_stmt(QS_Ctx * ctx, TSNode node)
     {
@@ -1604,8 +1833,18 @@ static void qs_emit_expr(FILE * out, MQ_Expr * e, b8 want_double)
         }
 
         case MQ_Expr_Call:
-        {
-            /* PI → Msk.PI() (zero-arg) */
+{
+            /* range(start, end) → Q# syntax: start..end */
+            if (e->call.name.size == 5 && e->call.name.str &&
+                strncmp((char *)e->call.name.str, "range", 5) == 0 &&
+                e->call.arg_count == 2)
+            {
+                qs_emit_expr(out, e->call.args[0], false);
+                fprintf(out, "..");
+                qs_emit_expr(out, e->call.args[1], false);
+                break;
+            }
+            /* PI → Msk.PI() */
             if (e->call.name.size == 2 && e->call.name.str &&
                 strncmp((char *)e->call.name.str, "PI", 2) == 0)
             {
@@ -1615,13 +1854,12 @@ static void qs_emit_expr(FILE * out, MQ_Expr * e, b8 want_double)
             fprintf(out, "%.*s(", (int)e->call.name.size, e->call.name.str);
             for (u32 i = 0; i < e->call.arg_count; i++)
             {
-                if (i > 0)
-                    fprintf(out, ", ");
+                if (i > 0) fprintf(out, ", ");
                 qs_emit_expr(out, e->call.args[i], want_double);
             }
             fprintf(out, ")");
             break;
-        }
+}
 
         case MQ_Expr_Array:
         {
@@ -2156,13 +2394,164 @@ static void qs_emit_expr(FILE * out, MQ_Expr * e, b8 want_double)
             QS_QMapEntry saved_qmap[QS_QMAP_MAX];
             memcpy(saved_qmap, s_qmap, sizeof(QS_QMapEntry) * s_qmap_count);
 
+            /* ── Detect ApplyToEach-lowered for-loop ─────────────────────────
+             *
+             * Pattern produced by lower_call_expr for ApplyToEach(Gate, reg):
+             *
+             *   MQ_Stmt_For {
+             *     var_name  = "_i"
+             *     iterable  = BinOp_Shl(0, reg_size-1)   -- range sentinel
+             *     body      = MQ_Stmt_Block {
+             *                   MQ_Stmt_Instr { Gate on placeholder qubit }
+             *                 }
+             *   }
+             *
+             * The placeholder qubit id is reg_base (always the first qubit of
+             * the register).  We must emit:
+             *
+             *   for _i in 0..reg_size-1 { Gate(reg[_i]); }
+             *
+             * instead of:
+             *
+             *   for _i in 0..reg_size-1 { Gate(qs[0]); }   ← WRONG
+             *
+             * Detection: var_name == "_i"  AND  body is a single-instr block
+             * (or a single MQ_Stmt_Instr directly) whose gate has qubit_count==1.
+             * ────────────────────────────────────────────────────────────── */
+            b8 is_apply_each_loop = false;
+            string loop_var = s->for_loop.var_name;
+
+            /* Check var_name == "_i" */
+            if (loop_var.size == 2 && loop_var.str &&
+                strncmp((char *)loop_var.str, "_i", 2) == 0)
+            {
+                /* Check body is a single gate instruction */
+                MQ_Stmt *body = s->for_loop.body;
+                MQ_Stmt *inner = NULL;
+
+                if (body && body->kind == MQ_Stmt_Block &&
+                    body->block.count == 1)
+                    inner = body->block.stmts[0];
+                else if (body && body->kind == MQ_Stmt_Instr)
+                    inner = body;
+                /* Also handle Adjoint-wrapped: MQ_Stmt_Adjoint { MQ_Stmt_Instr } */
+                else if (body && body->kind == MQ_Stmt_Adjoint &&
+                         body->adjoint_body &&
+                         body->adjoint_body->kind == MQ_Stmt_Instr)
+                    inner = body; /* keep adjoint wrapper, handle below */
+
+                if (inner && (inner->kind == MQ_Stmt_Instr ||
+                              inner->kind == MQ_Stmt_Adjoint))
+                    is_apply_each_loop = true;
+            }
+
             qs_indent(out, level);
             fprintf(out, "for %.*s in ",
-                    (int)s->for_loop.var_name.size,
-                    s->for_loop.var_name.str);
+                    (int)loop_var.size, loop_var.str);
+
+            /* Emit the range: BinOp_Shl prints as "0..N" via qs_emit_expr */
             qs_emit_expr_any(out, s->for_loop.iterable);
             fprintf(out, " {\n");
-            qs_emit_stmt(out, s->for_loop.body, level + 1);
+
+            if (is_apply_each_loop)
+            {
+                /* ── Emit Gate(reg[_i]) using the loop variable ── */
+                MQ_Stmt *body  = s->for_loop.body;
+                MQ_Stmt *inner = NULL;
+                b8 is_adjoint  = false;
+
+                if (body->kind == MQ_Stmt_Block && body->block.count == 1)
+                    inner = body->block.stmts[0];
+                else
+                    inner = body;
+
+                if (inner->kind == MQ_Stmt_Adjoint)
+                {
+                    is_adjoint = true;
+                    inner = inner->adjoint_body;
+                }
+
+                /* inner is now MQ_Stmt_Instr */
+                MQ_Instruction *instr = &inner->instr;
+
+                /* Find the register name for the placeholder qubit id */
+                u32 placeholder_id = instr->qubits[0];
+               const char *reg_name = NULL;
+
+/* First try: use the encoded base_id from the loop type annotation
+ * (set by lower_call_expr for ApplyToEach loops). This is unambiguous
+ * regardless of register name or qubit count. */
+u32 lookup_base = placeholder_id; // default
+if (s->for_loop.var_type &&
+    s->for_loop.var_type->element_type &&
+    s->for_loop.var_type->element_type->kind == MQ_Type_QubitReg)
+{
+    lookup_base = s->for_loop.var_type->element_type->width;
+}
+
+for (u32 mi = 0; mi < s_qmap_count; mi++)
+{
+    QS_QMapEntry *e = &s_qmap[mi];
+    if (e->size > 0 &&
+        lookup_base >= e->base &&
+        lookup_base < e->base + e->size)
+    {
+        reg_name = e->name;
+        break;
+    }
+}
+
+/* Last resort fallback — should never fire with valid IR */
+if (!reg_name)
+{
+    for (u32 mi = 0; mi < s_qmap_count; mi++)
+        if (s_qmap[mi].size > 0) { reg_name = s_qmap[mi].name; break; }
+}
+if (!reg_name) reg_name = "qs";
+
+                qs_indent(out, level + 1);
+
+                if (is_adjoint)
+                    fprintf(out, "Adjoint ");
+
+                if (instr->gate.gate == MQ_Gate_Custom)
+                {
+                    fprintf(out, "%.*s(%s[%.*s]);\n",
+                            (int)instr->gate.custom_name.size,
+                            (char *)instr->gate.custom_name.str,
+                            reg_name,
+                            (int)loop_var.size, (char *)loop_var.str);
+                }
+                else
+                {
+                    /* Emit params first if any, then reg[_i] */
+                    if (instr->gate.param_count > 0)
+                    {
+                        fprintf(out, "%s(", qs_gate_name(instr->gate.gate));
+                        for (u8 pi = 0; pi < instr->gate.param_count; pi++)
+                        {
+                            if (pi > 0) fprintf(out, ", ");
+                            qs_emit_gate_param(out, instr, pi);
+                        }
+                        fprintf(out, ", %s[%.*s]);\n",
+                                reg_name,
+                                (int)loop_var.size, (char *)loop_var.str);
+                    }
+                    else
+                    {
+                        fprintf(out, "%s(%s[%.*s]);\n",
+                                qs_gate_name(instr->gate.gate),
+                                reg_name,
+                                (int)loop_var.size, (char *)loop_var.str);
+                    }
+                }
+            }
+            else
+            {
+                /* Normal for-loop body — recurse as usual */
+                qs_emit_stmt(out, s->for_loop.body, level + 1);
+            }
+
             qs_indent(out, level);
             fprintf(out, "}\n");
 
