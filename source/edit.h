@@ -63,7 +63,7 @@ typedef struct Circuit {
 } Circuit;
 
 
-void CircuitEmitAsPython(Circuit* circuit, string filename);
+void CircuitEmitAsMQL(Circuit* circuit, string filename);
 void CircuitSetQubitCount(Circuit* circuit, int new_count);
 OperatorSlice* CircuitInsertTimesliceAt(Circuit* circuit, u32 index);
 OperatorSlice* CircuitPushTimeslice(Circuit* circuit);

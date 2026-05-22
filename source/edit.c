@@ -7,141 +7,122 @@
 #include "GLFW/glfw3.h"
 
 #include "client/tri_render.h"
+#include "translate/mql.h"
 
-static const char* get_qiskit_gate_class(GateType gate) {
+static MQ_GateType gate_type_to_mq(GateType gate) {
     switch (gate) {
-        case Gate_H:  return "HGate";
-        case Gate_PX: return "XGate";
-        case Gate_PY: return "YGate";
-        case Gate_PZ: return "ZGate";
-        case Gate_S:  return "SGate";
-        case Gate_T:  return "TGate";
-        default:      return "XGate";
+        case Gate_H:  return MQ_Gate_H;
+        case Gate_PX: return MQ_Gate_X;
+        case Gate_PY: return MQ_Gate_Y;
+        case Gate_PZ: return MQ_Gate_Z;
+        case Gate_S:  return MQ_Gate_S;
+        case Gate_T:  return MQ_Gate_T;
+        default:      return MQ_Gate_X; // safe fallback
     }
 }
 
-// Helper to map Enum to simple function calls (for non-controlled ops)
-static const char* get_qiskit_func_name(GateType gate) {
-    switch (gate) {
-        case Gate_H:  return "h";
-        case Gate_PX: return "x";
-        case Gate_PY: return "y";
-        case Gate_PZ: return "z";
-        case Gate_S:  return "s";
-        case Gate_T:  return "t";
-        default:      return "x";
-    }
-}
+// ---------------------------------------------------------------------------
+// Main conversion
+// ---------------------------------------------------------------------------
 
-void CircuitEmitAsPython(Circuit* circuit, string filename) {
-    M_Scratch scratch = scratch_get();
-    // List of lines to output
-    string_list output = {0};
+MQ_Program* CircuitToMQIR(M_Arena* arena, Circuit* circuit) {
     
-    // Add lines like this.
-    // Check str.h to see how to work with strings. try not to use char*s.
+    // --- Program shell ---
+    MQ_Program* prog = mq_program(arena, str_lit("circuit"), MQ_Lang_MQ);
     
-    // Any function that wants an arena, use &scratch.arena
-    // two functions you'll probably need:
-    //   str_lit()         : see below, makes a "string" from a string literal
-    //   str_from_format() : like printf, but makes a "string" instead of outputting to console
-    //                       needs to allocate space so will require an arena parameter
-    // Maybe output a few comments too
-    string_list_push(&scratch.arena, &output, str_lit("import pprint\n"));
-    string_list_push(&scratch.arena, &output, str_lit("from qiskit import QuantumCircuit, transpile\n"));
-    string_list_push(&scratch.arena, &output, str_lit("from qiskit_aer import AerSimulator\n"));
-    string_list_push(&scratch.arena, &output, str_lit("from qiskit.circuit.library import XGate, YGate, ZGate, HGate, SGate, TGate\n"));
+    // --- Registers ---
+    // One quantum register "q[0..n-1]" and a matching classical register "c[0..n-1]".
+    // Qubit flat IDs are 0..qubit_count-1 (base_id = 0 for both;
+    // classical bits live in a separate namespace so there is no collision).
+    MQ_Register regs[2];
+    regs[0] = mq_register_quantum(str_lit("q"), circuit->qubit_count, /*base_id=*/0, /*meta=*/NULL);
+    regs[1] = mq_register_classical(str_lit("c"), circuit->qubit_count, /*base_id=*/0);
     
+    MQ_Circuit* mq_circ = mq_circuit(arena,
+                                     str_lit("main"),
+                                     regs, 2,
+                                     circuit->qubit_count,
+                                     circuit->qubit_count);
     
-    string_list_push(&scratch.arena, &output, str_lit("\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_from_format(&scratch.arena, "qc = QuantumCircuit(%d)\n", circuit->qubit_count));
+    // --- Statement buffer ---
+    // Worst case: every qubit in every slice emits one instruction, plus
+    // a trailing measure-all.  Allocate generously from the arena.
+    u32 max_stmts = circuit->len * circuit->qubit_count + circuit->qubit_count;
+    MQ_Stmt** stmts = arena_alloc_array(arena, MQ_Stmt*, max_stmts);
+    u32 stmt_count = 0;
     
-    for(u32 i = 0; i < circuit->len; i++) {
+    // --- Walk slices ---
+    for (u32 i = 0; i < circuit->len; i++) {
         OperatorSlice* slice = &circuit->slices[i];
         
-        // 1. Analyze the slice to see if it contains controls
-        b8 is_controlled_slice = false;
-        u32 target_qubit_index = -1;
-        GateType target_gate_type = 0;
+        // Pass 1: categorise the slice.
+        // A slice is "controlled" if any qubit carries ControlOn or ControlOff.
+        // In that case there should be exactly one Gate1 target in the slice.
+        b8  is_controlled  = false;
+        u32 target_qubit   = (u32)-1;
+        GateType target_gate = (GateType)0;
         
-        // We need buffers to store control indices and states ('0' or '1')
-        // Assuming a max reasonable number of controls, or allocate based on qubit_count
-        u32 control_indices[64]; 
-        char control_states[65]; // +1 for null terminator
-        u32 control_count = 0;
+        u32 ctrl_qubits[MQ_MAX_CONTROLS];
+        u8  ctrl_states[MQ_MAX_CONTROLS];
+        u32 ctrl_count = 0;
         
-        for(u32 q = 0; q < slice->len; q++) {
+        for (u32 q = 0; q < slice->len; q++) {
             Operator* op = &slice->ops[q];
             
-            if (op->type == OpType_ControlOn || op->type == OpType_ControlOff) {
-                is_controlled_slice = true;
-                if (control_count < 64) {
-                    control_indices[control_count] = q;
-                    // OpType_ControlOn -> '1', OpType_ControlOff -> '0'
-                    control_states[control_count] = (op->type == OpType_ControlOn) ? '1' : '0';
-                    control_count++;
-                }
-            } else if (op->type == OpType_Gate1) {
-                target_qubit_index = q;
-                target_gate_type = op->gate;
+            switch (op->type) {
+                case OpType_ControlOn:
+                case OpType_ControlOff: {
+                    is_controlled = true;
+                    if (ctrl_count < MQ_MAX_CONTROLS) {
+                        ctrl_qubits[ctrl_count] = q;
+                        ctrl_states[ctrl_count] = (op->type == OpType_ControlOn) ? 1 : 0;
+                        ctrl_count++;
+                    }
+                } break;
+                
+                case OpType_Gate1: {
+                    target_qubit = q;
+                    target_gate  = op->gate;
+                } break;
+                
+                default: break;
             }
         }
-        control_states[control_count] = '\0'; // Null terminate the state string
         
-        // 2. Emission Logic
-        if (is_controlled_slice) {
-            // --- CONTROLLED OPERATION ---
-            if (target_qubit_index != -1 && control_count > 0) {
-                // We use the general .control() syntax in Qiskit to handle 
-                // arbitrary numbers of controls and "0" states.
-                // Syntax: qc.append(HGate().control(num_ctrl, ctrl_state="01"), [c1, c2, target])
+        // Pass 2: emit statement(s).
+        if (is_controlled) {
+            if (target_qubit != (u32)-1 && ctrl_count > 0) {
+                u32 qubits[1] = { target_qubit };
+                MQ_Instruction instr = mq_instr_gate(gate_type_to_mq(target_gate), qubits, 1);
                 
-                const char* gate_class = get_qiskit_gate_class(target_gate_type);
-                
-                // Start the formatting
-                // Note: Depending on your string library, you might need to build the list string dynamically
-                // Here I assume standard format strings can handle it or we build it step by step.
-                
-                string_list_push(&scratch.arena, &output, 
-                                 str_from_format(&scratch.arena, "qc.append(%s().control(%u, ctrl_state='%s'), [", 
-                                                 gate_class, control_count, control_states));
-                
-                // Add control indices
-                for(u32 c = 0; c < control_count; c++) {
-                    string_list_push(&scratch.arena, &output, 
-                                     str_from_format(&scratch.arena, "%u, ", control_indices[c]));
+                for (u32 c = 0; c < ctrl_count; c++) {
+                    mq_instr_add_control(&instr, ctrl_qubits[c], ctrl_states[c]);
                 }
                 
-                // Add target index and close
-                string_list_push(&scratch.arena, &output, 
-                                 str_from_format(&scratch.arena, "%u])\n", target_qubit_index));
+                stmts[stmt_count++] = mq_stmt_instr(arena, instr);
+            } else {
+                stmts[stmt_count++] = mq_stmt_comment(arena,
+                                                      str_lit("ERROR: controlled slice missing gate target or controls"));
             }
-            else {
-                // Handle error: Controlled slice with no target or lost controls
-                string_list_push(&scratch.arena, &output, 
-                                 str_lit("# Error: Malformed controlled slice\n"));
-            }
-        } 
-        else {
-            // --- PARALLEL SINGLE GATES ---
-            // If no controls exist, we might have multiple gates in one slice (e.g., H on q0, X on q1)
-            for(u32 q = 0; q < slice->len; q++) {
+            
+        } else {
+            for (u32 q = 0; q < slice->len; q++) {
                 Operator* op = &slice->ops[q];
                 
-                switch(op->type) {
+                switch (op->type) {
                     case OpType_Gate1: {
-                        const char* func = get_qiskit_func_name(op->gate);
-                        string_list_push(&scratch.arena, &output, 
-                                         str_from_format(&scratch.arena, "qc.%s(%u)\n", func, q));
+                        u32 qubits[1] = { q };
+                        MQ_Instruction instr = mq_instr_gate(gate_type_to_mq(op->gate), qubits, 1);
+                        stmts[stmt_count++] = mq_stmt_instr(arena, instr);
                     } break;
                     
                     case OpType_Inspect: {
-                        // Mapping Inspect_Chance or BlochSphere to a comment or save_state
-                        // For aer, save_state_vector is common, or just measure
                         if (op->inspect == Inspect_Chance) {
-                            string_list_push(&scratch.arena, &output, 
-                                             str_from_format(&scratch.arena, "qc.measure(%u, %u)\n", q, q)); // Simple measure mapping
+                            MQ_Instruction instr = mq_instr_measure(q, /*clbit=*/q);
+                            stmts[stmt_count++] = mq_stmt_instr(arena, instr);
+                        } else if (op->inspect == Inspect_BlochSphere) {
+                            stmts[stmt_count++] = mq_stmt_comment(arena,
+                                                                  str_from_format(arena, "bloch_sphere q[%u]", q));
                         }
                     } break;
                     
@@ -153,25 +134,35 @@ void CircuitEmitAsPython(Circuit* circuit, string filename) {
         }
     }
     
-    string_list_push(&scratch.arena, &output,
-                     str_lit("\nqc.measure_all()\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("simulator = AerSimulator()\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("qc = transpile(qc, simulator)\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("compiled_circuit = simulator.run(qc, shots=16384)\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("result = compiled_circuit.result()\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("counts = result.get_counts(qc)\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("probs = {state: count / 16384 for state, count in counts.items()}\n"));
-    string_list_push(&scratch.arena, &output,
-                     str_lit("pprint.pprint(probs)\n"));
+    // --- Final measure-all ---
+    // Mirror what the Qiskit emitter does: collapse every qubit into its
+    // paired classical bit at the end of the circuit.
+    //for (u32 q = 0; q < circuit->qubit_count; q++) {
+    //stmts[stmt_count++] = mq_stmt_instr(arena, mq_instr_measure(q, /*clbit=*/q));
+    //}
     
-    OS_FileCreateWrite(filename, string_list_flatten(&scratch.arena, &output));
-    scratch_return(&scratch);
+    // --- Assemble circuit body ---
+    mq_circ->body = mq_stmt_block(arena, stmts, stmt_count);
+    
+    // --- measure_map (qubit i -> cbit i) ---
+    // Length must equal total_qubits; -1 means unmeasured.
+    mq_circ->measure_map = arena_alloc_array(arena, i32, circuit->qubit_count);
+    for (u32 q = 0; q < circuit->qubit_count; q++) {
+        mq_circ->measure_map[q] = (i32)q;
+    }
+    
+    mq_program_add_circuit(arena, prog, mq_circ);
+    return prog;
+}
+
+void CircuitEmitAsMQL(Circuit* circuit, string filename) {
+    M_Arena temp = {0};
+    arena_init(&temp);
+    MQ_Program* prog = CircuitToMQIR(&temp, circuit);
+    FILE* out = fopen((const char*) filename.str, "w");
+    mql_emit(out, prog);
+    fclose(out);
+    arena_free(&temp);
 }
 
 //- Helpers
@@ -826,8 +817,8 @@ void EditorUpdate(EditContext* ctx, f32 delta) {
     }
     
     if (OS_InputKey(GLFW_KEY_LEFT_CONTROL) && OS_InputKeyPressed(GLFW_KEY_S)) {
-        printf("Saved Circuit to circuit.py\n"); flush;
-        CircuitEmitAsPython(&ctx->circuit, str_lit("circuit.py"));
+        printf("Saved Circuit to circuit.mql\n"); flush;
+        CircuitEmitAsMQL(&ctx->circuit, str_lit("circuit.mql"));
     }
     
     if (OS_InputKey(GLFW_KEY_LEFT_CONTROL) && OS_InputKeyPressed(GLFW_KEY_P)) {
