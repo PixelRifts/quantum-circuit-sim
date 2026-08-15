@@ -33,7 +33,7 @@ string_const str_cat(M_Arena* arena, string_const a, string_const b) {
 string_const str_from_format(M_Arena* arena, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    const char buf[8092];
+    char buf[8092];
     vsnprintf(buf, 8092, format, args);
     va_end(args);
     u64 size = strlen(buf);

@@ -5,10 +5,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "../defines.h"
 #include "../base/str.h"
 #include "tree_sitter/api.h"
+#include "ir.h"
 
 typedef uint32_t u32;
 
@@ -30,5 +32,9 @@ Cirq_ParseResult cirq_parse_file(const char *path);
 void cirq_print_tree(const Cirq_ParseResult *result);
 
 void cirq_parse_result_free(Cirq_ParseResult *result);
+
+MQ_Program *cirq_tree_to_ir(const Cirq_ParseResult *result, M_Arena *arena);
+
+void cirq_emit(FILE *out, MQ_Program *prog);
 
 #endif

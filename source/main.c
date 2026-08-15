@@ -362,10 +362,16 @@ int main(int argc, char **argv) {
 } break;
         
         case Fmt_Cirq: {
-            // prog = @call cirq_parse
-            fprintf(stderr, "Cirq input is currently unimplemented\n");
-            if (!prog) {
+            Cirq_ParseResult cq = cirq_parse_file(input_path);
+            if (cq.ok) {
+                prog = cirq_tree_to_ir(&cq, &systems_arena);
+                cirq_parse_result_free(&cq);
+            } else {
                 fprintf(stderr, "%s: error: Cirq parse failed\n", input_path);
+                return 1;
+            }
+            if (!prog) {
+                fprintf(stderr, "%s: error: Cirq IR lowering failed\n", input_path);
                 return 1;
             }
         } break;
@@ -413,8 +419,7 @@ int main(int argc, char **argv) {
 } break;
         
         case Fmt_Cirq: {
-            // @call cirq_emit(out, prog);
-            fprintf(stderr, "Cirq output is currently unimplemented\n");
+            cirq_emit(out, prog);
         } break;
         
         case Fmt_QSharp: {

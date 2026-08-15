@@ -1,26 +1,30 @@
 import cirq
-import pprint
+import math
 
-q0, q1, q2 = cirq.LineQubit.range(3)
+def build_QFT():
+    q = cirq.LineQubit.range(3)
+    circuit = cirq.Circuit()
 
-circuit = cirq.Circuit()
+    # Qubit 0
+    circuit.append(cirq.H(q[0]))
+    circuit.append(cirq.CZ(q[1], q[0]) ** (1/2))
+    circuit.append(cirq.CZ(q[2], q[0]) ** (1/4))
 
-circuit.append(cirq.H(q0))
-circuit.append(cirq.CZ(q1, q0)**0.5)
-circuit.append(cirq.CZ(q2, q0)**0.25)
+    # Qubit 1
+    circuit.append(cirq.H(q[1]))
+    circuit.append(cirq.CZ(q[2], q[1]) ** (1/2))
 
-circuit.append(cirq.H(q1))
-circuit.append(cirq.CZ(q2, q1)**0.5)
+    # Qubit 2
+    circuit.append(cirq.H(q[2]))
 
-circuit.append(cirq.H(q2))
-circuit.append(cirq.SWAP(q0, q2))
+    # Bit reversal
+    circuit.append(cirq.SWAP(q[0], q[2]))
 
-circuit.append(cirq.measure(q0, q1, q2, key='m'))
+    return circuit
 
-sim = cirq.Simulator()
-result = sim.run(circuit, repetitions=16384)
-
-counts = result.histogram(key='m')
-probs = {format(k, '03b'): v/16384 for k, v in counts.items()}
-
-pprint.pprint(probs)
+if __name__ == '__main__':
+    circuit = build_QFT()
+    circuit.append(cirq.measure(*cirq.LineQubit.range(3), key='result'))
+    simulator = cirq.Simulator()
+    result = simulator.run(circuit, repetitions=1024)
+    print(result.histogram(key='result'))
