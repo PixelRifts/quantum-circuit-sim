@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define PY_SNIPPET_MAX 64
+#define MQ_PI 3.14159265358979323846
 
 /* ────────────────────────────────────────────────────────────── */
 /* Read entire file into memory                                 */
@@ -710,6 +711,7 @@ static const char *cq_gate_name(MQ_GateType g)
     case MQ_Gate_RX:   return "rx";
     case MQ_Gate_RY:   return "ry";
     case MQ_Gate_RZ:   return "rz";
+    case MQ_Gate_CX:   return "CNOT";
     case MQ_Gate_SWAP: return "SWAP";
     case MQ_Gate_ISWAP:return "ISWAP";
     case MQ_Gate_CCX:  return "CCX";
@@ -743,7 +745,24 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
     case MQ_Expr_FloatLit: fprintf(out, "%g", e->lit.float_val); break;
     case MQ_Expr_IntLit:   fprintf(out, "%lld", (long long)e->lit.int_val); break;
     case MQ_Expr_Var:
-    case MQ_Expr_Symbol:   fprintf(out, "%.*s", (int)e->name.size, e->name.str); break;
+    case MQ_Expr_Symbol:
+    {
+        /* Normalize pi variants to math.pi for Cirq (import math).
+         * Strings may be non-null-terminated source slices. */
+        if (e->name.str) {
+            u64 sz = e->name.size;
+            const char *n = (const char *)e->name.str;
+            if ((sz == 2 && strncmp(n, "pi", 2) == 0) ||
+                (sz == 2 && strncmp(n, "PI", 2) == 0) ||
+                (sz == 7 && strncmp(n, "math.pi", 7) == 0) ||
+                (sz == 5 && strncmp(n, "np.pi", 5) == 0)) {
+                fprintf(out, "math.pi");
+                break;
+            }
+        }
+        fprintf(out, "%.*s", (int)e->name.size, e->name.str);
+        break;
+    }
     case MQ_Expr_BinOp:
         fprintf(out, "(");
         cq_emit_expr(out, e->bin.lhs);
@@ -759,6 +778,43 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
         cq_emit_expr(out, e->bin.rhs);
         fprintf(out, ")");
         break;
+    case MQ_Expr_Call:
+    {
+        /* Intercept PI() calls (from Q# IR) → math.pi */
+        if (e->call.arg_count == 0 && e->call.name.str &&
+            e->call.name.size == 2 &&
+            strncmp((char *)e->call.name.str, "PI", 2) == 0)
+        {
+            fprintf(out, "math.pi");
+            break;
+        }
+        fprintf(out, "%.*s(", (int)e->call.name.size, e->call.name.str);
+        for (u32 i = 0; i < e->call.arg_count; i++)
+        {
+            if (i > 0) fprintf(out, ", ");
+            cq_emit_expr(out, e->call.args[i]);
+        }
+        fprintf(out, ")");
+        break;
+    }
+    case MQ_Expr_UnOp:
+    {
+        static const char *math_fns[] = {
+            "", "", "",
+            "math.sin", "math.cos", "math.tan",
+            "math.asin", "math.acos", "math.atan",
+            "math.sqrt", "math.exp", "math.log", "abs"};
+        if (e->un.op == MQ_UnOp_Neg) {
+            fprintf(out, "-");
+            cq_emit_expr(out, e->un.operand);
+        } else {
+            u32 idx = (u32)e->un.op;
+            fprintf(out, "%s(", math_fns[idx]);
+            cq_emit_expr(out, e->un.operand);
+            fprintf(out, ")");
+        }
+        break;
+    }
     default: fprintf(out, "expr"); break;
     }
 }
@@ -777,18 +833,25 @@ static void cq_emit_instr(FILE *out, MQ_Instruction *in, MQ_Circuit *circ, u32 l
             fprintf(out, "cirq.%s", gname);
         }
         
-        if (in->gate.param_count > 0) {
-            fprintf(out, "(");
-            for (u8 pi = 0; pi < in->gate.param_count; pi++) {
-                if (pi > 0) fprintf(out, ", ");
-                if (in->gate.params_symbolic) {
-                    cq_emit_expr(out, in->gate.param_exprs[pi]);
-                } else {
-                    fprintf(out, "%g", in->gate.params[pi]);
-                }
-            }
-            fprintf(out, ")");
+       if (in->gate.param_count > 0) {
+    fprintf(out, "(");
+    for (u8 pi = 0; pi < in->gate.param_count; pi++) {
+        if (pi > 0) fprintf(out, ", ");
+
+        b8 is_zpow_exponent = (in->gate.gate == MQ_Gate_P);
+        if (is_zpow_exponent) fprintf(out, "exponent=");
+
+        if (in->gate.params_symbolic) {
+            if (is_zpow_exponent) fprintf(out, "(");
+            cq_emit_expr(out, in->gate.param_exprs[pi]);
+            if (is_zpow_exponent) fprintf(out, ") / math.pi");
+        } else {
+            double v = in->gate.params[pi];
+            fprintf(out, "%g", is_zpow_exponent ? v / MQ_PI : v);
         }
+    }
+    fprintf(out, ")");
+}
         
         fprintf(out, "(");
         for (u8 q = 0; q < in->qubit_count; q++) {
@@ -829,6 +892,29 @@ static void cq_emit_stmt(FILE *out, MQ_Stmt *s, MQ_Circuit *circ, u32 level)
         break;
     case MQ_Stmt_Instr:
         cq_emit_instr(out, &s->instr, circ, level);
+        break;
+    /* ── comment ──────────────────────────────────────────────────────── *
+     * Includes diagnostic/reset intrinsics (Message, DumpMachine, Reset,
+     * ResetAll, ...) that lower_gate_call() in qsharp.c already turned into
+     * comments, since they have no portable representation in Cirq. Without
+     * this case they were silently dropped instead of shown, which for
+     * ResetAll in particular hid a real, non-unitary operation from the
+     * reader rather than just omitting an inert debug call. */
+    case MQ_Stmt_Comment:
+        cq_indent(out, level);
+        fprintf(out, "#%.*s\n",
+                (int)s->comment_text.size, s->comment_text.str);
+        break;
+    /* ── generic call statement ──────────────────────────────────────────── */
+    case MQ_Stmt_Call:
+        cq_indent(out, level);
+        fprintf(out, "# %.*s(",
+                (int)s->call.callee.size, s->call.callee.str);
+        for (u32 i = 0; i < s->call.arg_count; i++) {
+            if (i > 0) fprintf(out, ", ");
+            cq_emit_expr(out, s->call.args[i]);
+        }
+        fprintf(out, ")\n");
         break;
     default:
         break;

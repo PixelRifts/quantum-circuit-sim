@@ -1,0 +1,28 @@
+// Deutsch-Jozsa Algorithm — 3 input qubits + 1 ancilla (q3)
+// Balanced oracle: f(x) = x0 XOR x1 XOR x2
+circuit DJ {
+    qubit q[4];
+    bit   c[3];
+
+    // Step 1: Init ancilla in |-> state
+    X q[3];
+    H q[0];
+    H q[1];
+    H q[2];
+    H q[3];
+
+    // Step 2: Balanced oracle (CX each input onto ancilla)
+    ctrl[q[0]] X q[3];
+    ctrl[q[1]] X q[3];
+    ctrl[q[2]] X q[3];
+
+    // Step 3: Final Hadamards on input qubits
+    H q[0];
+    H q[1];
+    H q[2];
+
+    // Measure input qubits (all-zero => constant, any-one => balanced)
+    measure q[0] -> c[0];
+    measure q[1] -> c[1];
+    measure q[2] -> c[2];
+}

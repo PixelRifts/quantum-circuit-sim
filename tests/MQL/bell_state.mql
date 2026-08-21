@@ -1,0 +1,11 @@
+// Bell State |Φ+⟩ = (|00⟩ + |11⟩) / √2
+circuit BellState {
+    qubit q[2];
+    bit   c[2];
+
+    H q[0];
+    ctrl[q[0]] X q[1];
+
+    measure q[0] -> c[0];
+    measure q[1] -> c[1];
+}
