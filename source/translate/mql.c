@@ -1885,6 +1885,20 @@ static void emit_expr(EmitCtx *ec, MQ_Expr *e) {
         break;
         case MQ_Expr_Symbol:
         case MQ_Expr_Var:
+        /* Normalize all pi variants to MQL's "PI" keyword.
+         * Note: MQL strings are non-null-terminated source slices,
+         * so we must use size + strncmp, not strcmp. */
+        if (e->name.str) {
+            u64 sz = e->name.size;
+            const char *n = (const char *)e->name.str;
+            if ((sz == 2 && strncmp(n, "pi", 2) == 0) ||
+                (sz == 2 && strncmp(n, "PI", 2) == 0) ||
+                (sz == 7 && strncmp(n, "math.pi", 7) == 0) ||
+                (sz == 5 && strncmp(n, "np.pi", 5) == 0)) {
+                fprintf(ec->f, "PI");
+                break;
+            }
+        }
         ec_str(ec, e->name);
         break;
         case MQ_Expr_QubitRef: {
@@ -1921,6 +1935,13 @@ static void emit_expr(EmitCtx *ec, MQ_Expr *e) {
         break;
         case MQ_Expr_Call:
         case MQ_Expr_Array:
+        /* Intercept PI() calls (from Q# IR) → bare PI */
+        if (e->kind == MQ_Expr_Call && e->call.arg_count == 0 &&
+            e->call.name.str && e->call.name.size == 2 &&
+            strncmp((char *)e->call.name.str, "PI", 2) == 0) {
+            fprintf(ec->f, "PI");
+            break;
+        }
         if (!str_is_null(e->call.name)) ec_str(ec, e->call.name);
         else                            fprintf(ec->f, "[");
         if (e->kind == MQ_Expr_Call) fprintf(ec->f, "(");
@@ -1947,7 +1968,7 @@ static void emit_qubit(EmitCtx *ec, u32 qubit_id) {
 static const char *gate_name_mql[] = {
     "I", "H", "X", "Y", "Z", "S", "Sdg", "T", "Tdg",
     "P", "RX", "RY", "RZ", "U",
-    "SWAP", "ISWAP", "RZZ", "RXX", "RYY",
+    "CNOT", "SWAP", "ISWAP", "RZZ", "RXX", "RYY",
     "CCX", "CSWAP",
     0, 0   // Custom and Unitary handled separately
 };

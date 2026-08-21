@@ -239,10 +239,7 @@ int main(int argc, char **argv) {
                 usage(argv[0]);
                 return 1;
             }
-            if (forced_out == Fmt_MQL) {
-                fprintf(stderr, "error: 'mql' is a source format and cannot be used as output\n");
-                return 1;
-            }
+
             
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
@@ -430,8 +427,7 @@ int main(int argc, char **argv) {
         
         case Fmt_MQL: {
             mql_emit(out, prog);
-            if (output_path) fclose(out);
-        } return 1;
+        } break;
     }
     
     if (output_path) fclose(out);

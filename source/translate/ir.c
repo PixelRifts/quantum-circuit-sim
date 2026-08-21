@@ -709,7 +709,7 @@ static void wr_expr(FILE *f, MQ_Expr *e) {
 static const char *gate_name_table[] = {
     "I", "H", "X", "Y", "Z", "S", "Sdg", "T", "Tdg",
     "P", "RX", "RY", "RZ", "U",
-    "SWAP", "ISWAP", "RZZ", "RXX", "RYY",
+    "CX", "SWAP", "ISWAP", "RZZ", "RXX", "RYY",
     "CCX", "CSWAP",
     "Custom", "Unitary"
 };
