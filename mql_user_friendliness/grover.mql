@@ -1,0 +1,20 @@
+
+circuit Grover_Friendly {
+    qubit q[3];
+
+    H q[0..2];
+    
+    // Alternative ways 
+    // H q;  
+    //OR                    
+    // H q[0]; H q[1]; H q[2]; 
+
+    
+    grover_oracle(q, "101");
+    grover_diffuser(q);
+
+    //measurement
+    measure q -> c[3];
+}
+
+

@@ -561,7 +561,10 @@ MQ_QubitNameTable mq_qubit_names_from_routine(M_Arena *arena, MQ_Routine *routin
         MQ_Type *ty = routine->params[i].type;
         if (!ty) continue;
         if (ty->kind == MQ_Type_Qubit)    total += 1;
-        if (ty->kind == MQ_Type_QubitReg) total += ty->width ? ty->width : 1;
+        /* width==0 means Qubit[] with unknown size (e.g. from Q# Qubit[]).
+         * Use a generous fallback of 64 so all qubit indices in the register
+         * get a proper name like "qs[N]" instead of the generic "q[N]". */
+        if (ty->kind == MQ_Type_QubitReg) total += ty->width ? ty->width : 64;
     }
     if (total == 0) return t;
     
@@ -576,7 +579,7 @@ MQ_QubitNameTable mq_qubit_names_from_routine(M_Arena *arena, MQ_Routine *routin
         if (ty->kind == MQ_Type_Qubit) {
             t.names[next_id++] = fp->name;
         } else if (ty->kind == MQ_Type_QubitReg) {
-            u32 width = ty->width ? ty->width : 1;
+            u32 width = ty->width ? ty->width : 64; /* match fallback in counting phase */
             for (u32 j = 0; j < width; j++) {
                 t.names[next_id++] = str_from_format(arena, "%.*s[%u]",
                                                      str_expand(fp->name), j);

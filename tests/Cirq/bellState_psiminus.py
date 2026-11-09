@@ -10,7 +10,8 @@ circuit.append(cirq.CNOT(q0, q1))
 circuit.append(cirq.X(q1))
 circuit.append(cirq.Z(q0))
 
-circuit.append(cirq.measure(q0, q1, key='m'))
+circuit.append(cirq.measure(q0, key='m0'))
+circuit.append(cirq.measure(q1, key='m1'))
 
 sim = cirq.Simulator()
 result = sim.run(circuit, repetitions=16384)

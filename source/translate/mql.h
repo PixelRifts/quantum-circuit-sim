@@ -2,9 +2,21 @@
 #define MQL_H
 
 #include <stdio.h>
-
+#include "defines.h"
 #include "base/str.h"
+#include "base/mem.h"
 #include "ir.h"
+
+/* ======================================================================
+ * MQL (MetaQuantum Language) Frontend
+ *
+ * User-friendly, expressive quantum domain-specific language supporting:
+ *  - Pseudo-code quantum algorithms (Grover, QFT, Teleportation, Bell pairs)
+ *  - Vectorized qubit addressing & slice ranges: q[0..1], q[0, 1], q
+ *  - Built-in algorithmic macros: grover_oracle, grover_diffuser, qft, bell_pair
+ *  - Vectorized register measurements: measure q -> c[2], measure q -> c
+ *  - Cross-compilation to Qiskit, Cirq, Q#, and MQ IR
+ * ====================================================================== */
 
 /* ======================================================================
  * Token kinds
@@ -55,8 +67,9 @@ typedef enum MQL_TokenKind {
     MQL_Tok_Int,
     MQL_Tok_Float,
     MQL_Tok_Angle,
+    MQL_Tok_String,
     
-    // Built-in math functions (treated as reserved words)
+    // Built-in math functions
     MQL_Tok_Sin,
     MQL_Tok_Cos,
     MQL_Tok_Tan,
@@ -67,8 +80,9 @@ typedef enum MQL_TokenKind {
     MQL_Tok_Exp,
     MQL_Tok_Log,
     MQL_Tok_Abs,
+    MQL_Tok_Pi,
     
-    // Built-in gate names
+    // Built-in gate names & aliases
     MQL_Tok_GateI,
     MQL_Tok_GateH,
     MQL_Tok_GateX,
@@ -88,50 +102,63 @@ typedef enum MQL_TokenKind {
     MQL_Tok_GateRZZ,
     MQL_Tok_GateRXX,
     MQL_Tok_GateRYY,
-    MQL_Tok_GateCCX,
-    MQL_Tok_GateCSWAP,
-    MQL_Tok_GateCNOT,
+    MQL_Tok_GateCCX,      // Toffoli
+    MQL_Tok_GateCSWAP,    // Fredkin
+    MQL_Tok_GateCNOT,     // CX
     MQL_Tok_GateCZ,
+    MQL_Tok_GateCP,
+    MQL_Tok_GateCRX,
+    MQL_Tok_GateCRY,
+    MQL_Tok_GateCRZ,
     
-    // Punctuation
-    MQL_Tok_LParen,
-    MQL_Tok_RParen,
-    MQL_Tok_LBrace,
-    MQL_Tok_RBrace,
-    MQL_Tok_LBracket,
-    MQL_Tok_RBracket,
-    MQL_Tok_Semicolon,
-    MQL_Tok_Comma,
-    MQL_Tok_Colon,
-    MQL_Tok_Dot,
-    MQL_Tok_Star,
-    MQL_Tok_StarStar,
-    MQL_Tok_Plus,
-    MQL_Tok_Minus,
-    MQL_Tok_Slash,
-    MQL_Tok_Percent,
-    MQL_Tok_Tilde,
-    MQL_Tok_Pragma,
+    // Built-in algorithmic macros / subroutines
+    MQL_Tok_MacroGroverOracle,
+    MQL_Tok_MacroGroverDiffuser,
+    MQL_Tok_MacroBellPair,
+    MQL_Tok_MacroQFT,
+    MQL_Tok_MacroIQFT,
+    MQL_Tok_MacroTeleport,
+    
+    // Punctuation & Operators
+    MQL_Tok_LParen,       // (
+    MQL_Tok_RParen,       // )
+    MQL_Tok_LBrace,       // {
+    MQL_Tok_RBrace,       // }
+    MQL_Tok_LBracket,     // [
+    MQL_Tok_RBracket,     // ]
+    MQL_Tok_Semicolon,    // ;
+    MQL_Tok_Comma,        // ,
+    MQL_Tok_Colon,        // :
+    MQL_Tok_Dot,          // .
+    MQL_Tok_DotDot,       // ..
+    MQL_Tok_Star,         // *
+    MQL_Tok_StarStar,     // **
+    MQL_Tok_Plus,         // +
+    MQL_Tok_Minus,        // -
+    MQL_Tok_Slash,        // /
+    MQL_Tok_Percent,      // %
+    MQL_Tok_Tilde,        // ~
+    MQL_Tok_Pragma,       // #pragma
     
     // Relational / logical
-    MQL_Tok_Eq,
-    MQL_Tok_EqEq,
-    MQL_Tok_Bang,
-    MQL_Tok_BangEq,
-    MQL_Tok_Lt,
-    MQL_Tok_LtEq,
-    MQL_Tok_Gt,
-    MQL_Tok_GtEq,
-    MQL_Tok_AmpAmp,
-    MQL_Tok_PipePipe,
-    MQL_Tok_Arrow,
+    MQL_Tok_Eq,           // =
+    MQL_Tok_EqEq,         // ==
+    MQL_Tok_Bang,         // !
+    MQL_Tok_BangEq,       // !=
+    MQL_Tok_Lt,           // <
+    MQL_Tok_LtEq,         // <=
+    MQL_Tok_Gt,           // >
+    MQL_Tok_GtEq,         // >=
+    MQL_Tok_AmpAmp,       // &&
+    MQL_Tok_PipePipe,     // ||
+    MQL_Tok_Arrow,        // ->
     
     // Bitwise
-    MQL_Tok_Amp,
-    MQL_Tok_Pipe,
-    MQL_Tok_Caret,
-    MQL_Tok_LtLt,
-    MQL_Tok_GtGt,
+    MQL_Tok_Amp,          // &
+    MQL_Tok_Pipe,         // |
+    MQL_Tok_Caret,        // ^
+    MQL_Tok_LtLt,         // <<
+    MQL_Tok_GtGt,         // >>
     
     // Augmented assignment
     MQL_Tok_PlusEq,
@@ -146,7 +173,7 @@ typedef enum MQL_TokenKind {
 } MQL_TokenKind;
 
 /* ======================================================================
- * Token
+ * Token & Lexer
  * ====================================================================== */
 
 typedef struct MQL_Token {
@@ -155,10 +182,6 @@ typedef struct MQL_Token {
     u32           line;
     u32           col;
 } MQL_Token;
-
-/* ======================================================================
- * Lexer
- * ====================================================================== */
 
 typedef struct MQL_Lexer {
     string    src;
@@ -169,23 +192,19 @@ typedef struct MQL_Lexer {
     b8        has_peeked;
 } MQL_Lexer;
 
-/* ======================================================================
- * API
- * ====================================================================== */
-
-void mql_lexer_init(MQL_Lexer *lex, string src);
-MQL_Token mql_next(MQL_Lexer *lex);
-MQL_Token mql_peek(MQL_Lexer *lex);
+void        mql_lexer_init(MQL_Lexer *lex, string src);
+MQL_Token   mql_next(MQL_Lexer *lex);
+MQL_Token   mql_peek(MQL_Lexer *lex);
 const char *mql_token_kind_str(MQL_TokenKind kind);
 
 /* ======================================================================
- * Parser
+ * Symbol Table & Parser
  * ====================================================================== */
 
 typedef struct MQL_Error {
-    string      message;
-    u32         line;
-    u32         col;
+    string            message;
+    u32               line;
+    u32               col;
     struct MQL_Error *next;
 } MQL_Error;
 
@@ -201,7 +220,7 @@ typedef struct MQL_Symbol {
     u32         size;
 } MQL_Symbol;
 
-#define MQL_SCOPE_MAX 64
+#define MQL_SCOPE_MAX 128
 
 typedef struct MQL_Parser {
     MQL_Lexer  lex;
@@ -210,18 +229,21 @@ typedef struct MQL_Parser {
     MQL_Error *errors_tail;
     b8         had_error;
     
-    // Symbol table for the current circuit/routine scope
+    // Symbol table for current circuit/routine scope
     MQL_Symbol scope[MQL_SCOPE_MAX];
     u32        scope_count;
+    
+    // Tracking active circuit/routine for implicit auto-declarations
+    u32        auto_cbits_count;
 } MQL_Parser;
 
-void mql_parser_init(MQL_Parser *p, M_Arena *arena, string src);
+void        mql_parser_init(MQL_Parser *p, M_Arena *arena, string src);
 MQ_Program *mql_parse_program(MQL_Parser *p);
 
 /* ======================================================================
  * Emitter
  * ====================================================================== */
 
-void mql_emit(FILE *out, MQ_Program *prog);
+void        mql_emit(FILE *out, MQ_Program *prog);
 
 #endif // MQL_H

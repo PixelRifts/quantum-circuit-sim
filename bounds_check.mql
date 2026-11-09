@@ -1,0 +1,6 @@
+circuit BoundsTest {
+    qubit q[3]; // A 3-qubit register (valid indices: 0, 1, 2)
+    
+   
+    H q[5];
+}

@@ -1,0 +1,33 @@
+//entanglement
+
+circuit Simple_Friendly {
+    qubit q[2];
+
+    H q[0];
+
+    CNOT q[0] -> q[1];
+    
+    // Alternative ways
+    // CX q[0], q[1];                  
+    // ctrl[q[0]] X q[1];             
+
+    //measurement
+    measure q -> c[2];
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

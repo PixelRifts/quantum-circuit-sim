@@ -759,6 +759,32 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
                 fprintf(out, "math.pi");
                 break;
             }
+            if (sz == 4 && strncmp(n, "true", 4) == 0) {
+                fprintf(out, "True");
+                break;
+            }
+            if (sz == 5 && strncmp(n, "false", 5) == 0) {
+                fprintf(out, "False");
+                break;
+            }
+            if (sz == 3 && strncmp(n, "One", 3) == 0) {
+                fprintf(out, "1");
+                break;
+            }
+            if (sz == 4 && strncmp(n, "Zero", 4) == 0) {
+                fprintf(out, "0");
+                break;
+            }
+            
+            const char *qmark = strchr(n, '?');
+            const char *pipe = qmark ? strchr(qmark, '|') : NULL;
+            if (qmark && pipe) {
+                int x_len = qmark - n;
+                int y_len = pipe - (qmark + 1);
+                const char *z = pipe + 1;
+                fprintf(out, "(%.*s if %.*s else %s)", y_len, qmark + 1, x_len, n, z);
+                break;
+            }
         }
         fprintf(out, "%.*s", (int)e->name.size, e->name.str);
         break;
@@ -773,6 +799,14 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
             case MQ_BinOp_Div: fprintf(out, " / "); break;
             case MQ_BinOp_Pow: fprintf(out, " ** "); break;
             case MQ_BinOp_Mod: fprintf(out, " %% "); break;
+            case MQ_BinOp_Eq:  fprintf(out, " == "); break;
+            case MQ_BinOp_Ne:  fprintf(out, " != "); break;
+            case MQ_BinOp_Lt:  fprintf(out, " < "); break;
+            case MQ_BinOp_Le:  fprintf(out, " <= "); break;
+            case MQ_BinOp_Gt:  fprintf(out, " > "); break;
+            case MQ_BinOp_Ge:  fprintf(out, " >= "); break;
+            case MQ_BinOp_LogAnd: fprintf(out, " and "); break;
+            case MQ_BinOp_LogOr:  fprintf(out, " or "); break;
             default:           fprintf(out, " ? "); break;
         }
         cq_emit_expr(out, e->bin.rhs);
@@ -788,10 +822,10 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
             fprintf(out, "math.pi");
             break;
         }
-        fprintf(out, "%.*s(", (int)e->call.name.size, e->call.name.str);
+        fprintf(out, "%.*s(circuit", (int)e->call.name.size, e->call.name.str);
         for (u32 i = 0; i < e->call.arg_count; i++)
         {
-            if (i > 0) fprintf(out, ", ");
+            fprintf(out, ", ");
             cq_emit_expr(out, e->call.args[i]);
         }
         fprintf(out, ")");
@@ -815,6 +849,17 @@ static void cq_emit_expr(FILE *out, MQ_Expr *e)
         }
         break;
     }
+    case MQ_Expr_RegIndex:
+        fprintf(out, "%.*s[", (int)e->reg.name.size, e->reg.name.str);
+        cq_emit_expr(out, e->reg.index_expr);
+        fprintf(out, "]");
+        break;
+    case MQ_Expr_QubitRef:
+        fprintf(out, "q[%u]", e->qubit_id);
+        break;
+    case MQ_Expr_BoolLit:
+        fprintf(out, "%s", e->lit.bool_val ? "True" : "False");
+        break;
     default: fprintf(out, "expr"); break;
     }
 }
@@ -870,6 +915,10 @@ static void cq_emit_instr(FILE *out, MQ_Instruction *in, MQ_Circuit *circ, u32 l
             fprintf(out, ")");
         }
         
+        if (in->gate.has_classical_cond) {
+            fprintf(out, ".with_classical_controls('c%u')", in->gate.classical_bit);
+        }
+        
         fprintf(out, ")\n");
     } else if (in->type == MQ_Instr_Measure) {
         fprintf(out, "circuit.append(cirq.measure(");
@@ -886,8 +935,13 @@ static void cq_emit_stmt(FILE *out, MQ_Stmt *s, MQ_Circuit *circ, u32 level)
     if (!s) return;
     switch (s->kind) {
     case MQ_Stmt_Block:
-        for (u32 i = 0; i < s->block.count; i++) {
-            cq_emit_stmt(out, s->block.stmts[i], circ, level);
+        if (s->block.count == 0) {
+            cq_indent(out, level);
+            fprintf(out, "pass\n");
+        } else {
+            for (u32 i = 0; i < s->block.count; i++) {
+                cq_emit_stmt(out, s->block.stmts[i], circ, level);
+            }
         }
         break;
     case MQ_Stmt_Instr:
@@ -908,14 +962,69 @@ static void cq_emit_stmt(FILE *out, MQ_Stmt *s, MQ_Circuit *circ, u32 level)
     /* ── generic call statement ──────────────────────────────────────────── */
     case MQ_Stmt_Call:
         cq_indent(out, level);
-        fprintf(out, "# %.*s(",
+        fprintf(out, "%.*s(circuit",
                 (int)s->call.callee.size, s->call.callee.str);
         for (u32 i = 0; i < s->call.arg_count; i++) {
-            if (i > 0) fprintf(out, ", ");
+            fprintf(out, ", ");
             cq_emit_expr(out, s->call.args[i]);
         }
         fprintf(out, ")\n");
         break;
+    case MQ_Stmt_DeclClassical:
+        cq_indent(out, level);
+        fprintf(out, "%.*s",
+                (int)s->decl_classical.name.size,
+                s->decl_classical.name.str);
+        if (s->decl_classical.init) {
+            fprintf(out, " = ");
+            cq_emit_expr(out, s->decl_classical.init);
+        }
+        fprintf(out, "\n");
+        break;
+
+    case MQ_Stmt_Set:
+        cq_indent(out, level);
+        cq_emit_expr(out, s->set.lhs);
+        fprintf(out, " = ");
+        cq_emit_expr(out, s->set.rhs);
+        fprintf(out, "\n");
+        break;
+
+    case MQ_Stmt_If:
+        for (u32 i = 0; i < s->if_stmt.count; i++) {
+            MQ_IfBranch *br = &s->if_stmt.branches[i];
+            cq_indent(out, level);
+            if (!br->cond) {
+                fprintf(out, "else:\n");
+            } else {
+                fprintf(out, i == 0 ? "if " : "elif ");
+                cq_emit_expr(out, br->cond);
+                fprintf(out, ":\n");
+            }
+            cq_emit_stmt(out, br->body, circ, level + 1);
+        }
+        break;
+
+    case MQ_Stmt_For:
+        cq_indent(out, level);
+        fprintf(out, "for %.*s in ",
+                (int)s->for_loop.var_name.size,
+                s->for_loop.var_name.str);
+        cq_emit_expr(out, s->for_loop.iterable);
+        fprintf(out, ":\n");
+        cq_emit_stmt(out, s->for_loop.body, circ, level + 1);
+        break;
+
+    case MQ_Stmt_Return:
+        cq_indent(out, level);
+        fprintf(out, "return");
+        if (s->return_val) {
+            fprintf(out, " ");
+            cq_emit_expr(out, s->return_val);
+        }
+        fprintf(out, "\n");
+        break;
+
     default:
         break;
     }
@@ -930,6 +1039,30 @@ void cirq_emit(FILE *out, MQ_Program *prog)
     fprintf(out, "import cirq\n");
     fprintf(out, "import math\n\n");
     
+    for (u32 r = 0; r < prog->routine_count; r++) {
+        MQ_Routine *rt = prog->routines[r];
+        if (!rt) continue;
+
+        fprintf(out, "def %.*s(circuit", (int)rt->name.size, rt->name.str);
+        for (u32 p = 0; p < rt->param_count; p++) {
+            fprintf(out, ", %.*s",
+                    (int)rt->params[p].name.size,
+                    rt->params[p].name.str);
+        }
+        fprintf(out, "):\n");
+
+        MQ_Circuit tmp_circ;
+        memset(&tmp_circ, 0, sizeof(tmp_circ));
+        tmp_circ.name = rt->name;
+        
+        if (rt->body)
+            cq_emit_stmt(out, rt->body, &tmp_circ, 1);
+        else
+            fprintf(out, "    pass\n");
+
+        fprintf(out, "\n");
+    }
+
     for (u32 c = 0; c < prog->circuit_count; c++) {
         MQ_Circuit *circ = prog->circuits[c];
         if (!circ) continue;

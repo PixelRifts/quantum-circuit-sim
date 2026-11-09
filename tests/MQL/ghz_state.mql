@@ -1,5 +1,24 @@
 // GHZ State = (|000⟩ + |111⟩) / √2
+
+// --- New User-Friendly Syntax ---
 circuit GHZ {
+    qubit q[3];
+
+    // Prepare initial superposition
+    H q[0];
+
+    // Entangle across the register
+    CNOT q[0] -> q[1];
+    CNOT q[0] -> q[2];
+
+    // Vectorized measurement for all qubits
+    measure q -> c[3];
+}
+
+/* ======================================================================
+ * Previous / Traditional Syntax (for comparison):
+ * ======================================================================
+circuit GHZ_Old {
     qubit q[3];
     bit   c[3];
 
@@ -11,3 +30,4 @@ circuit GHZ {
     measure q[1] -> c[1];
     measure q[2] -> c[2];
 }
+====================================================================== */

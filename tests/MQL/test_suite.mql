@@ -1,0 +1,71 @@
+// ============================================================
+// test_suite.mql  -- MQL feature coverage test
+// ============================================================
+
+// 1. Bell State (entanglement + vectorized measure, auto bit-register)
+circuit BellState {
+    qubit q[2];
+
+    H q[0];
+    CNOT q[0] -> q[1];
+    measure q -> c[2];
+}
+
+// 2. Grover 2-qubit search (algorithmic macros)
+circuit Grover {
+    qubit q[2];
+
+    H q[0..1];
+    grover_oracle(q, "11");
+    grover_diffuser(q);
+    measure q -> c[2];
+}
+
+// 3. QFT 3-qubit (manual gate-level + ctrl modifier)
+circuit QFT3 {
+    qubit qs[3];
+
+    H qs[0];
+    ctrl[qs[1]] P(pi / 2) qs[0];
+    ctrl[qs[2]] P(pi / 4) qs[0];
+
+    H qs[1];
+    ctrl[qs[2]] P(pi / 2) qs[1];
+
+    H qs[2];
+
+    SWAP qs[0], qs[2];
+
+    measure qs -> c[3];
+}
+
+// 4. Teleportation (bell_pair macro + classical feedback)
+circuit Teleportation {
+    qubit msg;
+    qubit alice;
+    qubit bob;
+    bit c[2];
+
+    H msg;
+    bell_pair(alice, bob);
+
+    CNOT msg -> alice;
+    H msg;
+    measure msg   -> c[0];
+    measure alice -> c[1];
+
+    X bob if c[1] == 1;
+    Z bob if c[0] == 1;
+}
+
+// 5. GHZ State (vectorized range + CNOT chain)
+circuit GHZ {
+    qubit q[4];
+
+    H q[0];
+    CNOT q[0] -> q[1];
+    CNOT q[1] -> q[2];
+    CNOT q[2] -> q[3];
+
+    measure q -> c[4];
+}

@@ -2,7 +2,7 @@ import pprint
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 
-qc = QuantumCircuit(3)
+qc = QuantumCircuit(3, 3)
 
 # equal superposition
 qc.h(0)
@@ -34,7 +34,9 @@ qc.h(0)
 qc.h(1)
 qc.h(2)
 
-qc.measure_all()
+qc.measure(0, 0)
+qc.measure(1, 1)
+qc.measure(2, 2)
 simulator = AerSimulator()
 qc = transpile(qc, simulator)
 result = simulator.run(qc, shots=16384).result()

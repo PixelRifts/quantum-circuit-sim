@@ -1,0 +1,7 @@
+circuit Broken {
+    qubit q[5];
+    
+    H q[0;  
+    fake_gate q[1];
+    measure q -> ;
+}

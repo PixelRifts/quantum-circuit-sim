@@ -3,12 +3,14 @@ from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 from qiskit.circuit.library import XGate, YGate, ZGate, HGate, SGate, TGate
 
-qc = QuantumCircuit(3)
+qc = QuantumCircuit(3, 3)
 qc.h(0)
 qc.cx(0,1)
 qc.cx(0,2)
 
-qc.measure_all()
+qc.measure(0, 0)
+qc.measure(1, 1)
+qc.measure(2, 2)
 simulator = AerSimulator()
 qc = transpile(qc, simulator)
 compiled_circuit = simulator.run(qc, shots=16384)

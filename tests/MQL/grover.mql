@@ -1,0 +1,49 @@
+// Grover's 2-qubit search algorithm (marked state |11>)
+
+// --- New User-Friendly Syntax (with Algorithmic Macros) ---
+circuit Grover {
+    qubit q[2];
+
+    // Initialize superposition across range [0..1]
+    H q[0..1];
+
+    // High-level phase oracle for "11"
+    grover_oracle(q, "11");
+
+    // High-level Grover diffusion operator (2|s><s| - I)
+    grover_diffuser(q);
+
+    // Vectorized measurement
+    measure q -> c[2];
+}
+
+/* ======================================================================
+ * Previous / Low-Level Manual Gate Implementation (for comparison):
+ * ======================================================================
+circuit Grover_Manual {
+    qubit q[2];
+    bit   c[2];
+
+    // Step 1: Initial Hadamards
+    H q[0];
+    H q[1];
+
+    // Step 2: Oracle for |11> (Controlled-Z)
+    ctrl[q[0]] Z q[1];
+
+    // Step 3: Manual Diffusion Operator
+    H q[0];
+    H q[1];
+    X q[0];
+    X q[1];
+    ctrl[q[0]] Z q[1];
+    X q[0];
+    X q[1];
+    H q[0];
+    H q[1];
+
+    // Step 4: Individual measurements
+    measure q[0] -> c[0];
+    measure q[1] -> c[1];
+}
+====================================================================== */

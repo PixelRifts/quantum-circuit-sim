@@ -7,4 +7,7 @@ meta/*.ilk
 meta/*.sln
 
 results/
-qft.mql
+miscellenious/
+__pycache__/
+
+stress_output.py
