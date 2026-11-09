@@ -3,7 +3,7 @@ from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 import math
 
-qc = QuantumCircuit(3)
+qc = QuantumCircuit(3, 3)
 
 qc.h(0)
 qc.cp(math.pi/2, 1, 0)   # controlled-R2
@@ -15,7 +15,9 @@ qc.cp(math.pi/2, 2, 1)   # controlled-R2
 qc.h(2)
 qc.swap(0, 2)
 
-qc.measure_all()
+qc.measure(0, 0)
+qc.measure(1, 1)
+qc.measure(2, 2)
 simulator = AerSimulator()
 qc = transpile(qc, simulator)
 result = simulator.run(qc, shots=16384).result()

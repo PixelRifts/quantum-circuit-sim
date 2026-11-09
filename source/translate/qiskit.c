@@ -1618,6 +1618,7 @@ typedef struct
 
 static QK_QMapEntry s_qkmap[QK_QMAP_MAX];
 static u32 s_qkmap_count = 0;
+static MQ_Circuit *s_current_circuit = NULL;
 
 static void qkmap_reset(void) { s_qkmap_count = 0; }
 
@@ -1747,6 +1748,32 @@ static void qk_emit_expr(FILE *out, MQ_Expr *e, b8 want_float)
                 fprintf(out, "math.pi");
                 break;
             }
+            if (sz == 4 && strncmp(n, "true", 4) == 0) {
+                fprintf(out, "True");
+                break;
+            }
+            if (sz == 5 && strncmp(n, "false", 5) == 0) {
+                fprintf(out, "False");
+                break;
+            }
+            if (sz == 3 && strncmp(n, "One", 3) == 0) {
+                fprintf(out, "1");
+                break;
+            }
+            if (sz == 4 && strncmp(n, "Zero", 4) == 0) {
+                fprintf(out, "0");
+                break;
+            }
+            
+            const char *qmark = strchr(n, '?');
+            const char *pipe = qmark ? strchr(qmark, '|') : NULL;
+            if (qmark && pipe) {
+                int x_len = qmark - n;
+                int y_len = pipe - (qmark + 1);
+                const char *z = pipe + 1;
+                fprintf(out, "(%.*s if %.*s else %s)", y_len, qmark + 1, x_len, n, z);
+                break;
+            }
         }
         fprintf(out, "%.*s", (int)e->name.size, e->name.str);
         break;
@@ -1849,11 +1876,10 @@ static void qk_emit_expr(FILE *out, MQ_Expr *e, b8 want_float)
             fprintf(out, "math.pi");
             break;
         }
-        fprintf(out, "%.*s(", (int)e->call.name.size, e->call.name.str);
+        fprintf(out, "%.*s(qc", (int)e->call.name.size, e->call.name.str);
         for (u32 i = 0; i < e->call.arg_count; i++)
         {
-            if (i > 0)
-                fprintf(out, ", ");
+            fprintf(out, ", ");
             qk_emit_expr(out, e->call.args[i], want_float);
         }
         fprintf(out, ")");
@@ -2055,7 +2081,12 @@ static void qk_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
             qk_emit_qubit_py(out, in->qubits[qi]);
         }
 
-        fprintf(out, ")\n");
+        fprintf(out, ")");
+        if (in->gate.has_classical_cond)
+        {
+            fprintf(out, ".c_if(%u, %u)", in->gate.classical_bit, in->gate.classical_val);
+        }
+        fprintf(out, "\n");
         break;
     }
 
@@ -2065,6 +2096,10 @@ static void qk_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
         qk_indent(out, level);
         fprintf(out, "qc.measure(");
         qk_emit_qubit_py(out, in->qubits[0]);
+        if (in->measure.has_target)
+            fprintf(out, ", %u", in->measure.clbit);
+        else
+            fprintf(out, ", %u", in->qubits[0]); /* default: qubit i -> cbit i */
         fprintf(out, ")\n");
         break;
     }
@@ -2200,8 +2235,15 @@ static void qk_emit_stmt(FILE *out, MQ_Stmt *s, u32 level)
 
     /* ── block: recurse into children ─────────────────────────────────── */
     case MQ_Stmt_Block:
-        for (u32 i = 0; i < s->block.count; i++)
-            qk_emit_stmt(out, s->block.stmts[i], level);
+        if (s->block.count == 0) {
+            qk_indent(out, level);
+            fprintf(out, "pass\n");
+        } else {
+            for (u32 i = 0; i < s->block.count; i++)
+            {
+                qk_emit_stmt(out, s->block.stmts[i], level);
+            }
+        }
         break;
 
     /* ── qubit declaration ────────────────────────────────────────────── *
@@ -2280,12 +2322,11 @@ static void qk_emit_stmt(FILE *out, MQ_Stmt *s, u32 level)
     case MQ_Stmt_Call:
     {
         qk_indent(out, level);
-        fprintf(out, "%.*s(",
+        fprintf(out, "%.*s(qc",
                 (int)s->call.callee.size, s->call.callee.str);
         for (u32 i = 0; i < s->call.arg_count; i++)
         {
-            if (i > 0)
-                fprintf(out, ", ");
+            fprintf(out, ", ");
             qk_emit_expr_any(out, s->call.args[i]);
         }
         fprintf(out, ")\n");
@@ -2373,7 +2414,19 @@ static void qk_emit_stmt(FILE *out, MQ_Stmt *s, u32 level)
         {
             if (strstr((const char *)s->pragma.key.str, "measure_all") != NULL)
             {
-                fprintf(out, "qc.measure_all()\n");
+                if (s_current_circuit && s_current_circuit->total_qubits > 0)
+                {
+                    for (u32 i = 0; i < s_current_circuit->total_qubits; i++)
+                    {
+                        if (i > 0)
+                            qk_indent(out, level);
+                        fprintf(out, "qc.measure(%u, %u)\n", i, i);
+                    }
+                }
+                else
+                {
+                    fprintf(out, "qc.measure_all()\n");
+                }
             }
             else
             {
@@ -2491,14 +2544,12 @@ void mq_ir_to_code(FILE *f, MQ_Program *prog)
             continue;
 
         /* Python function signature: def <name>(<params>): */
-        fprintf(f, "def %.*s(",
+        fprintf(f, "def %.*s(qc",
                 (int)rt->name.size, rt->name.str);
 
         for (u32 p = 0; p < rt->param_count; p++)
         {
-            if (p > 0)
-                fprintf(f, ", ");
-            fprintf(f, "%.*s",
+            fprintf(f, ", %.*s",
                     (int)rt->params[p].name.size,
                     rt->params[p].name.str);
         }
@@ -2581,8 +2632,10 @@ void mq_ir_to_code(FILE *f, MQ_Program *prog)
 
         fprintf(f, ":\n");
 
-        /* ── Create QuantumCircuit instance ──────────────────────────– */
-        fprintf(f, "    qc = QuantumCircuit(%u)\n", circ->total_qubits);
+        /* Create QuantumCircuit with qubits + classical bits */
+        fprintf(f, "    qc = QuantumCircuit(%u, %u)\n",
+                circ->total_qubits,
+                circ->total_cbits);
 
         /* ── save outer qkmap; build circuit scope ────────────────── */
         u32 saved_circ_count = s_qkmap_count;
@@ -2609,6 +2662,7 @@ void mq_ir_to_code(FILE *f, MQ_Program *prog)
         }
 
         /* ── emit circuit body ──────────────────────────────────── */
+        s_current_circuit = circ;
         if (circ->body && circ->body->kind == MQ_Stmt_Block)
         {
             for (u32 si = 0; si < circ->body->block.count; si++)
@@ -2619,8 +2673,7 @@ void mq_ir_to_code(FILE *f, MQ_Program *prog)
                 /* Skip top-level declarations — they've been handled. */
                 if (s->kind == MQ_Stmt_DeclQubit)
                     continue;
-                if (s->kind == MQ_Stmt_DeclClassical)
-                    continue;
+                /* Removed DeclClassical skip to allow routine call bindings */
                 qk_emit_stmt(f, s, 1);
             }
         }
@@ -2631,6 +2684,7 @@ void mq_ir_to_code(FILE *f, MQ_Program *prog)
                 circ->body->kind != MQ_Stmt_DeclClassical)
                 qk_emit_stmt(f, circ->body, 1);
         }
+        s_current_circuit = NULL;
 
         /* ── return statement ─────────────────────────────────────– */
         fprintf(f, "    return qc\n\n");

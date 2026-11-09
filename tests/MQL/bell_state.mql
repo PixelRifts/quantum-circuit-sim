@@ -1,5 +1,21 @@
 // Bell State |Φ+⟩ = (|00⟩ + |11⟩) / √2
+
+// --- New User-Friendly Syntax ---
 circuit BellState {
+    qubit q[2];
+
+    // Create entanglement
+    H q[0];
+    CNOT q[0] -> q[1];
+
+    // Vectorized measurement for entire register
+    measure q -> c[2];
+}
+
+/* ======================================================================
+ * Previous / Traditional Syntax (for comparison):
+ * ======================================================================
+circuit BellState_Old {
     qubit q[2];
     bit   c[2];
 
@@ -8,4 +24,27 @@ circuit BellState {
 
     measure q[0] -> c[0];
     measure q[1] -> c[1];
+}
+====================================================================== */
+
+
+
+
+
+
+
+
+
+
+// Quantum Random Number Generator
+// This circuit creates a 1-bit random value using a qubit in superposition.
+
+circuit RandomNumber {
+    qubit q[1];    // Allocate one quantum bit
+    bit c[1];      // Allocate one classical bit to store measurement result
+
+    
+    H q[0];        //Put the qubit into superposition
+
+    measure q[0] -> c[0];   // Measure the qubit and result is stored in the classical bit c[0]
 }

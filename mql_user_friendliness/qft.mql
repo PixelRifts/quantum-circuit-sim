@@ -1,0 +1,19 @@
+
+circuit QFT_Friendly {
+    qubit q[3];
+
+    // High-level QFT macro applied to all 3 qubits
+    qft(q);
+    
+    // Alternative
+    // H q[0];
+    // ctrl[q[1]] P(pi / 2) q[0];
+    // ctrl[q[2]] P(pi / 4) q[0];
+    // H q[1];
+    // ctrl[q[2]] P(pi / 2) q[1];
+    // H q[2];
+    // SWAP q[0] q[2];
+
+    //measurement
+    measure q -> c[3];
+}

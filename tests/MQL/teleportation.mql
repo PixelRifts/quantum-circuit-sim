@@ -1,0 +1,51 @@
+// Quantum Teleportation Protocol (Full Protocol with Classical Corrections)
+circuit Teleportation {
+    qubit msg;
+    qubit alice;
+    qubit bob;
+    bit c[2];
+
+    // Step 1: Prepare state on msg
+    H msg;
+
+    // Step 2: Distribute entangled Bell pair between Alice and Bob
+    bell_pair(alice, bob);
+
+    // Step 3: Bell-basis measurement by Alice
+    CNOT msg -> alice;
+    H msg;
+    measure msg -> c[0];
+    measure alice -> c[1];
+
+    // Step 4: Bob applies classically-conditioned corrections
+    X bob if c[1] == 1;
+    Z bob if c[0] == 1;
+}
+
+/* ======================================================================
+ * Previous / Low-Level Manual Gates (for comparison):
+ * ======================================================================
+circuit Teleportation_Manual {
+    qubit msg;
+    qubit alice;
+    qubit bob;
+    bit c[2];
+
+    // State preparation
+    H msg;
+
+    // Manual Bell pair
+    H alice;
+    ctrl[alice] X bob;
+
+    // Bell measurement
+    ctrl[msg] X alice;
+    H msg;
+    measure msg -> c[0];
+    measure alice -> c[1];
+
+    // Corrections
+    X bob if c[1] == 1;
+    Z bob if c[0] == 1;
+}
+====================================================================== */

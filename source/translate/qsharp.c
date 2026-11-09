@@ -2152,6 +2152,15 @@ static void qs_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
 
     case MQ_Instr_Gate:
     {
+        if (in->gate.has_classical_cond)
+        {
+            qs_indent(out, level);
+            fprintf(out, "if r%u == %s {\n",
+                    in->gate.classical_bit,
+                    in->gate.classical_val ? "One" : "Zero");
+            level++;
+        }
+
         /* Special custom gates ---------------------------------------- */
         if (in->gate.gate == MQ_Gate_Custom)
         {
@@ -2167,18 +2176,36 @@ static void qs_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
                 else
                     fprintf(out, "\"\"");
                 fprintf(out, ");\n");
+                if (in->gate.has_classical_cond)
+                {
+                    level--;
+                    qs_indent(out, level);
+                    fprintf(out, "}\n");
+                }
                 return;
             }
             if (cs == 11 && strncmp(cn, "DumpMachine", 11) == 0)
             {
                 qs_indent(out, level);
                 fprintf(out, "DumpMachine();\n");
+                if (in->gate.has_classical_cond)
+                {
+                    level--;
+                    qs_indent(out, level);
+                    fprintf(out, "}\n");
+                }
                 return;
             }
             if (cs == 8 && strncmp(cn, "ResetAll", 8) == 0)
             {
                 qs_indent(out, level);
                 fprintf(out, "ResetAll(%s);\n", qmap_array_name());
+                if (in->gate.has_classical_cond)
+                {
+                    level--;
+                    qs_indent(out, level);
+                    fprintf(out, "}\n");
+                }
                 return;
             }
             if (cs == 10 && strncmp(cn, "ApplyToEach", 10) == 0)
@@ -2194,6 +2221,12 @@ static void qs_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
                 /* remaining qubits as array */
                 fprintf(out, "%s[%u .. %u]", qmap_array_name(), in->qubits[0] - qmap_array_base(), in->qubits[in->qubit_count - 1] - qmap_array_base());
                 fprintf(out, ");\n");
+                if (in->gate.has_classical_cond)
+                {
+                    level--;
+                    qs_indent(out, level);
+                    fprintf(out, "}\n");
+                }
                 return;
             }
 
@@ -2241,6 +2274,12 @@ static void qs_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
                     qs_emit_qubit(out, in->qubits[qi]);
                 }
                 fprintf(out, ");\n");
+            }
+            if (in->gate.has_classical_cond)
+            {
+                level--;
+                qs_indent(out, level);
+                fprintf(out, "}\n");
             }
             return;
         }
@@ -2315,6 +2354,12 @@ static void qs_emit_instr(FILE *out, MQ_Instruction *in, u32 level)
                 qs_emit_qubit(out, in->qubits[qi]);
             }
             fprintf(out, ");\n");
+        }
+        if (in->gate.has_classical_cond)
+        {
+            level--;
+            qs_indent(out, level);
+            fprintf(out, "}\n");
         }
         break;
     }
@@ -3007,7 +3052,7 @@ void qsharp_emit(FILE *out, MQ_Program *prog)
             else
                 fprintf(out, "        use %.*s = Qubit[%u];\n",
                         (int)reg->name.size, reg->name.str, reg->size);
-            qmap_add(reg->base_id, reg->size,
+            qmap_add(reg->base_id, reg->size == 1 ? 0 : reg->size,
                      reg->name.str, (u32)reg->name.size);
         }
 

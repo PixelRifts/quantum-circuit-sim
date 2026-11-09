@@ -1,0 +1,41 @@
+// 3-Qubit Quantum Fourier Transform (QFT)
+
+// --- New User-Friendly Syntax (with QFT Algorithmic Macro) ---
+circuit QFT {
+    qubit qs[3];
+
+    // High-level QFT subroutine (applies H, CP ladder, and bit-reversal SWAP)
+    qft(qs);
+
+    // Vectorized measurement
+    measure qs -> c[3];
+}
+
+/* ======================================================================
+ * Previous / Low-Level Manual Gate Implementation (for comparison):
+ * ======================================================================
+circuit QFT_Manual {
+    qubit qs[3];
+    bit   c[3];
+
+    // Qubit 0
+    H qs[0];
+    ctrl[qs[1]] P(pi / 2) qs[0];
+    ctrl[qs[2]] P(pi / 4) qs[0];
+
+    // Qubit 1
+    H qs[1];
+    ctrl[qs[2]] P(pi / 2) qs[1];
+
+    // Qubit 2
+    H qs[2];
+
+    // Bit reversal
+    SWAP qs[0], qs[2];
+
+    // Measure
+    measure qs[0] -> c[0];
+    measure qs[1] -> c[1];
+    measure qs[2] -> c[2];
+}
+====================================================================== */

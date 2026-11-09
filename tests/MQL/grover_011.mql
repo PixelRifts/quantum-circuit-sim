@@ -1,0 +1,7 @@
+circuit Grover011 {
+    qubit q[3];
+    H q;
+    grover_oracle(q, "011");
+    grover_diffuser(q);
+    measure q -> c[3];
+}
